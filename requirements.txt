@@ -1,0 +1,8 @@
+mesa
+pygame
+numpy
+matplotlib
+osmnx
+networkx
+geopandas
+folium
