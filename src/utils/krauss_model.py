@@ -74,6 +74,11 @@ class KraussModel:
         max_speed_above_leader = leader_speed + 5.0  # Don't exceed leader by more than 5 m/s
         safe_speed = min(safe_speed, max_speed_above_leader)
         
+        # Increase minimum safe distance significantly
+        min_safe_distance = 30.0  # meters - reduced from 40m to allow closer following
+        if distance_to_leader < min_safe_distance:
+            safe_speed = min(safe_speed, leader_speed * 0.5)  # Slow down if too close
+        
         # Ensure safe speed is not negative
         return max(0.0, safe_speed)
     

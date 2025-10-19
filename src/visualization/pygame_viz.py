@@ -9,6 +9,10 @@ import pygame
 import numpy as np
 from typing import Tuple, List, Dict
 import math
+import os
+import requests
+from io import BytesIO
+from PIL import Image
 
 from ..models.traffic_model import TrafficSimulationModel
 from ..agents.vehicle import Vehicle
@@ -54,8 +58,8 @@ class TrafficVisualization:
         
         # Colors
         self.colors = {
-            'background': (50, 50, 50),
-            'road': (100, 100, 100),  # Lighter gray for roads
+            'background': (30, 30, 30),  # Darker background
+            'road': (120, 120, 120),      # Much lighter gray for roads
             'lane_marker': (255, 255, 255),
             'vehicle': (255, 0, 0),
             'text': (255, 255, 255),
@@ -81,6 +85,96 @@ class TrafficVisualization:
         # Running state
         self.running = True
         self.paused = False
+        
+        # Car sprites
+        self.car_sprites = {}
+        self._load_car_sprites()
+    
+    def _load_car_sprites(self):
+        """Load car sprites from internet or create simple ones."""
+        try:
+            # Try to load car images from internet
+            self._load_car_from_internet()
+        except Exception as e:
+            print(f"Could not load car images from internet: {e}")
+            print("Using simple car shapes instead")
+            self._create_simple_car_sprites()
+    
+    def _load_car_from_internet(self):
+        """Load car images from internet."""
+        # Simple car image URLs (you can replace these with better ones)
+        car_urls = {
+            'red': 'https://via.placeholder.com/64x32/FF0000/FFFFFF?text=🚗',
+            'blue': 'https://via.placeholder.com/64x32/0000FF/FFFFFF?text=🚗',
+            'green': 'https://via.placeholder.com/64x32/00FF00/FFFFFF?text=🚗',
+            'yellow': 'https://via.placeholder.com/64x32/FFFF00/000000?text=🚗',
+            'purple': 'https://via.placeholder.com/64x32/800080/FFFFFF?text=🚗',
+        }
+        
+        for color_name, url in car_urls.items():
+            try:
+                response = requests.get(url, timeout=5)
+                if response.status_code == 200:
+                    # Convert to pygame surface
+                    image = Image.open(BytesIO(response.content))
+                    image = image.convert('RGBA')
+                    
+                    # Convert PIL image to pygame surface
+                    mode = image.mode
+                    size = image.size
+                    data = image.tobytes()
+                    
+                    car_surface = pygame.image.fromstring(data, size, mode)
+                    self.car_sprites[color_name] = car_surface
+                    print(f"Loaded car sprite for {color_name}")
+            except Exception as e:
+                print(f"Failed to load car sprite for {color_name}: {e}")
+    
+    def _create_simple_car_sprites(self):
+        """Create simple car sprites programmatically."""
+        colors = {
+            'red': (255, 0, 0),
+            'blue': (0, 0, 255),
+            'green': (0, 255, 0),
+            'yellow': (255, 255, 0),
+            'purple': (128, 0, 128),
+        }
+        
+        for color_name, color in colors.items():
+            # Create a simple car sprite
+            car_surface = pygame.Surface((64, 32), pygame.SRCALPHA)
+            
+            # Draw car body
+            pygame.draw.rect(car_surface, color, (8, 8, 48, 16))
+            
+            # Draw windows
+            pygame.draw.rect(car_surface, (50, 50, 50), (12, 10, 12, 4))
+            pygame.draw.rect(car_surface, (50, 50, 50), (40, 10, 12, 4))
+            
+            # Draw wheels
+            pygame.draw.circle(car_surface, (30, 30, 30), (16, 12), 3)
+            pygame.draw.circle(car_surface, (30, 30, 30), (16, 20), 3)
+            pygame.draw.circle(car_surface, (30, 30, 30), (48, 12), 3)
+            pygame.draw.circle(car_surface, (30, 30, 30), (48, 20), 3)
+            
+            self.car_sprites[color_name] = car_surface
+            print(f"Created simple car sprite for {color_name}")
+    
+    def _get_car_color_name(self, color: Tuple[int, int, int]) -> str:
+        """Convert RGB color to color name."""
+        r, g, b = color
+        
+        # Simple color matching
+        if r > 200 and g < 100 and b < 100:
+            return 'red'
+        elif r < 100 and g < 100 and b > 200:
+            return 'blue'
+        elif r < 100 and g > 200 and b < 100:
+            return 'green'
+        elif r > 200 and g > 200 and b < 100:
+            return 'yellow'
+        else:
+            return 'purple'  # Default
     
     def world_to_screen(self, world_x: float, world_y: float) -> Tuple[int, int]:
         """
@@ -123,18 +217,18 @@ class TrafficVisualization:
         start_x, start_y = self.world_to_screen(lane.start_point.x, lane.start_point.y)
         end_x, end_y = self.world_to_screen(lane.end_point.x, lane.end_point.y)
         
-        # Draw road (thicker line)
-        road_width = int(lane.lane_width * self.zoom * 4)  # Make roads much wider
-        if road_width < 4:
-            road_width = 4
+        # Draw road (MUCH thicker line for laptop visibility)
+        road_width = int(lane.lane_width * self.zoom * 20)  # Make roads MUCH wider
+        if road_width < 20:
+            road_width = 20
         
         pygame.draw.line(self.screen, self.colors['road'], 
                         (start_x, start_y), (end_x, end_y), road_width)
         
         # Draw lane markers (center line)
-        if road_width > 8:
+        if road_width > 40:
             pygame.draw.line(self.screen, self.colors['lane_marker'], 
-                           (start_x, start_y), (end_x, end_y), 3)
+                           (start_x, start_y), (end_x, end_y), 8)
     
     def draw_vehicle(self, vehicle: Vehicle):
         """
@@ -151,15 +245,19 @@ class TrafficVisualization:
         angle = vehicle.get_visual_angle()
         
         # Vehicle dimensions (scaled by zoom)
-        length = int(vehicle.length * self.zoom * 2)  # Make cars bigger
-        width = int(vehicle.width * self.zoom * 2)    # Make cars bigger
+        length = int(vehicle.length * self.zoom * 8)  # Make cars MUCH bigger
+        width = int(vehicle.width * self.zoom * 8)    # Make cars MUCH bigger
         
         # Ensure minimum size
-        length = max(8, length)
-        width = max(4, width)
+        length = max(32, length)
+        width = max(16, width)
         
-        # Create car shape
-        self._draw_car_shape(screen_x, screen_y, length, width, angle, vehicle.color)
+        # Try to use car sprite, fallback to drawn shape
+        color_name = self._get_car_color_name(vehicle.color)
+        if color_name in self.car_sprites:
+            self._draw_car_sprite(screen_x, screen_y, length, width, angle, color_name)
+        else:
+            self._draw_car_shape(screen_x, screen_y, length, width, angle, vehicle.color)
         
         # Draw speed indicator (small line showing speed)
         if self.zoom > 0.5:  # Only show when zoomed in
@@ -226,6 +324,36 @@ class TrafficVisualization:
         
         # Draw the rotated car
         self.screen.blit(rotated_surface, rotated_rect)
+    
+    def _draw_car_sprite(self, x: int, y: int, length: int, width: int, angle: float, color_name: str):
+        """
+        Draw a car using a sprite/image.
+        
+        Args:
+            x, y: Center position
+            length: Car length
+            width: Car width
+            angle: Rotation angle in radians
+            color_name: Color name for sprite lookup
+        """
+        if color_name not in self.car_sprites:
+            return
+        
+        # Get the original sprite
+        original_sprite = self.car_sprites[color_name]
+        
+        # Scale the sprite to match the desired size
+        scaled_sprite = pygame.transform.scale(original_sprite, (length, width))
+        
+        # Rotate the sprite
+        rotated_sprite = pygame.transform.rotate(scaled_sprite, math.degrees(angle))
+        
+        # Get the rotated rect and center it
+        rotated_rect = rotated_sprite.get_rect()
+        rotated_rect.center = (x, y)
+        
+        # Draw the rotated sprite
+        self.screen.blit(rotated_sprite, rotated_rect)
     
     def draw_statistics(self):
         """Draw simulation statistics on screen."""

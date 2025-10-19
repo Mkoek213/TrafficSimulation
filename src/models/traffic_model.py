@@ -32,7 +32,7 @@ class TrafficSimulationModel(mesa.Model):
                  width: int = 1000,
                  height: int = 1000,
                  time_step: float = 0.1,  # seconds
-                 vehicle_spawn_rate: float = 0.1,  # vehicles per second
+                 vehicle_spawn_rate: float = 0.1,  # vehicles per second (one every 10 seconds)
                  max_vehicles: int = 100):
         """
         Initialize the traffic simulation model.
@@ -78,57 +78,44 @@ class TrafficSimulationModel(mesa.Model):
         # Initialize road network
         self._create_test_road_network()
         
-        # Spawn initial vehicles
+        # Spawn vehicles gradually over time
         self._spawn_initial_vehicles()
     
     def _create_test_road_network(self):
         """Create a simple test road network."""
-        # Create a simple highway (centered)
-        start_point = Point(-400, 0)
-        end_point = Point(400, 0)
+        # Create a single lane highway (centered) - much longer road
+        start_point = Point(-2000, 0)  # Extended from -600 to -2000
+        end_point = Point(2000, 0)    # Extended from 600 to 2000
         
         highway = self.road_network.create_simple_highway(
-            start_point, end_point, num_lanes=3
-        )
-        
-        # Create a perpendicular road (centered)
-        start_point2 = Point(0, -300)
-        end_point2 = Point(0, 300)
-        
-        highway2 = self.road_network.create_simple_highway(
-            start_point2, end_point2, num_lanes=2
+            start_point, end_point, num_lanes=1
         )
         
         print(f"Created road network with {len(self.road_network.all_lanes)} lanes")
+        print(f"Road length: {self.road_network.get_lane_length(list(self.road_network.all_lanes.keys())[0]):.1f}m")
     
     def _spawn_initial_vehicles(self):
         """Spawn initial vehicles on the road network."""
-        num_initial_vehicles = min(10, self.max_vehicles)
-        
-        for i in range(num_initial_vehicles):
+        # Only spawn one vehicle initially to avoid clustering
+        if self.max_vehicles > 0:
             self._spawn_vehicle()
     
     def _spawn_vehicle(self):
-        """Spawn a new vehicle on a random lane."""
+        """Spawn a new vehicle with proper spacing."""
         if len(self.vehicles) >= self.max_vehicles:
             return
         
-        # Get available lanes
-        available_lanes = list(self.road_network.all_lanes.keys())
-        if not available_lanes:
-            return
-        
-        # Select random lane
-        lane_id = random.choice(available_lanes)
+        # Get the first lane (we only have one lane)
+        lane_id = list(self.road_network.all_lanes.keys())[0]
         
         # Create vehicle
         vehicle_id = self.vehicle_counter
         self.vehicle_counter += 1
         
         # Random vehicle properties
-        max_speed = random.uniform(25.0, 35.0)  # m/s
-        max_acceleration = random.uniform(1.5, 2.5)  # m/s²
-        max_deceleration = random.uniform(-3.5, -4.5)  # m/s²
+        max_speed = random.uniform(30.0, 40.0)  # m/s (increased speeds)
+        max_acceleration = random.uniform(2.0, 3.0)  # m/s² (faster acceleration)
+        max_deceleration = random.uniform(-4.0, -5.0)  # m/s² (stronger braking)
         
         # Random color
         color = (
@@ -137,12 +124,15 @@ class TrafficSimulationModel(mesa.Model):
             random.randint(0, 255)
         )
         
+        # Calculate safe starting position to avoid collisions
+        safe_start_position = self._calculate_safe_start_position(lane_id)
+        
         vehicle = Vehicle(
             model=self,
             unique_id=vehicle_id,
             lane_id=lane_id,
-            position=random.uniform(0, 50),  # Start near beginning of lane
-            speed=random.uniform(5, 15),  # Initial speed
+            position=safe_start_position,
+            speed=random.uniform(15, 25),  # Higher initial speed to clear space faster
             max_speed=max_speed,
             max_acceleration=max_acceleration,
             max_deceleration=max_deceleration,
@@ -156,7 +146,52 @@ class TrafficSimulationModel(mesa.Model):
         # Update statistics
         self.stats['total_vehicles_spawned'] += 1
         
-        print(f"Spawned vehicle {vehicle_id} on lane {lane_id}")
+        print(f"Spawned vehicle {vehicle_id} at position {safe_start_position:.1f}m")
+    
+    def _calculate_safe_start_position(self, lane_id: int) -> float:
+        """
+        Calculate a safe starting position for a new vehicle at the start of the road.
+        
+        Args:
+            lane_id: ID of the lane
+            
+        Returns:
+            Safe starting position along the lane (at the start)
+        """
+        # Get existing vehicles in this lane
+        existing_vehicles = self.get_vehicles_in_lane(lane_id)
+        
+        if not existing_vehicles:
+            # No vehicles in lane, start at beginning
+            return random.uniform(0, 20)
+        
+        # Sort vehicles by position
+        existing_vehicles.sort(key=lambda v: v.position)
+        
+        # Find vehicles near the start of the road (within first 100m)
+        start_vehicles = [v for v in existing_vehicles if v.position < 100.0]
+        
+        if not start_vehicles:
+            # No vehicles near start, spawn at beginning
+            return random.uniform(0, 20)
+        
+        # Find the vehicle closest to the start
+        closest_vehicle = min(start_vehicles, key=lambda v: v.position)
+        
+        # Calculate safe distance behind the closest vehicle
+        min_safe_distance = 80.0  # meters - increased minimum safe distance
+        safe_position = closest_vehicle.position - min_safe_distance - closest_vehicle.length
+        
+        # Ensure we don't go negative (stay at start of road)
+        safe_position = max(0, safe_position)
+        
+        # Add some randomness to avoid perfect spacing
+        safe_position += random.uniform(0, 10)
+        
+        # Ensure we don't go negative
+        safe_position = max(0, safe_position)
+        
+        return safe_position
     
     def remove_vehicle(self, vehicle: Vehicle):
         """
@@ -254,7 +289,7 @@ class TrafficSimulationModel(mesa.Model):
         # Update spawn timer
         self.spawn_timer += self.time_step
         
-        # Spawn new vehicles if needed
+        # Spawn new vehicles if needed (very slowly)
         if (self.spawn_timer >= 1.0 / self.vehicle_spawn_rate and 
             len(self.vehicles) < self.max_vehicles):
             self._spawn_vehicle()
@@ -306,7 +341,7 @@ class TrafficSimulationModel(mesa.Model):
             'collisions': 0
         }
         
-        # Spawn initial vehicles
+        # Spawn initial vehicles gradually
         self._spawn_initial_vehicles()
         
         print("Simulation reset")

@@ -144,6 +144,9 @@ class Vehicle(mesa.Agent):
         
         # Distance is the gap between vehicles plus leader's length
         distance = leader.position - self.position - leader.length
+        
+        # Don't subtract safety margin here - it causes false collision detection
+        # The safety margin is handled in the Krauss model instead
         return max(0.0, distance)
     
     def can_change_lane(self, direction: str) -> bool:
@@ -236,6 +239,13 @@ class Vehicle(mesa.Agent):
         # Calculate distance to leader
         distance_to_leader = self.calculate_distance_to_leader()
         
+        # Check for collision with leader (only if very close)
+        if distance_to_leader < 3.0:  # Stop if within 3 meters (reduced from 10m)
+            print(f"COLLISION DETECTED! Vehicle {self.unique_id} too close to leader")
+            # Emergency stop
+            self.speed = 0
+            return
+        
         # Get leader speed
         leader_speed = None
         leader = self.get_leader()
@@ -259,6 +269,12 @@ class Vehicle(mesa.Agent):
             dt
         )
         
+        # Check for collision after position update
+        if self._check_collision_after_move(next_position):
+            print(f"COLLISION AVOIDED! Vehicle {self.unique_id} stopping")
+            self.speed = 0
+            return
+        
         # Check if vehicle has reached end of lane
         lane_length = self.model.get_lane_length(self.lane_id)
         if next_position >= lane_length:
@@ -266,6 +282,34 @@ class Vehicle(mesa.Agent):
             self.model.remove_vehicle(self)
         else:
             self.position = next_position
+    
+    def _check_collision_after_move(self, new_position: float) -> bool:
+        """
+        Check if moving to new_position would cause a collision.
+        
+        Args:
+            new_position: Proposed new position
+            
+        Returns:
+            True if collision would occur, False otherwise
+        """
+        # Get all vehicles in the same lane
+        lane_vehicles = self.model.get_vehicles_in_lane(self.lane_id)
+        
+        for vehicle in lane_vehicles:
+            if vehicle == self:
+                continue
+            
+            # Calculate distance to this vehicle
+            distance = abs(vehicle.position - new_position)
+            
+            # Check if too close (considering vehicle lengths)
+            min_distance = (self.length + vehicle.length) / 2 + 5.0  # 5m safety margin (reduced from 15m)
+            
+            if distance < min_distance:
+                return True
+        
+        return False
     
     def get_visual_position(self) -> Tuple[float, float]:
         """

@@ -6,3 +6,5 @@ osmnx
 networkx
 geopandas
 folium
+requests
+Pillow
