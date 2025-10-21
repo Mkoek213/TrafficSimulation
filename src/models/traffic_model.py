@@ -82,17 +82,95 @@ class TrafficSimulationModel(mesa.Model):
         self._spawn_initial_vehicles()
     
     def _create_test_road_network(self):
-        """Create a simple test road network."""
-        # Create a single lane highway (centered) - much longer road
-        start_point = Point(-2000, 0)  # Extended from -600 to -2000
-        end_point = Point(2000, 0)    # Extended from 600 to 2000
+        """Create a simple test road network with an intersection."""
+        from ..models.road_network import Road, Lane, Intersection
         
-        highway = self.road_network.create_simple_highway(
-            start_point, end_point, num_lanes=1
-        )
+        # Create intersection at origin
+        center_point = Point(0, 0)
+        intersection = Intersection(0, center_point)
+        
+        # Define road parameters
+        road_length = 1500.0  # 1.5km in each direction
+        
+        # Create 4 roads: East, North, West, South
+        directions = [
+            ('East', Point(road_length, 0)),      # East
+            ('North', Point(0, road_length)),     # North
+            ('West', Point(-road_length, 0)),     # West
+            ('South', Point(0, -road_length))     # South
+        ]
+        
+        incoming_lanes = []
+        outgoing_lanes = []
+        
+        for idx, (direction_name, direction_offset) in enumerate(directions):
+            # Calculate far point for this direction
+            far_point = Point(
+                center_point.x + direction_offset.x,
+                center_point.y + direction_offset.y
+            )
+            
+            # Create incoming road (toward center)
+            incoming_road = Road(len(self.road_network.roads), f"{direction_name}_Incoming")
+            incoming_lane = Lane(
+                lane_id=len(self.road_network.all_lanes),
+                start_point=far_point,
+                end_point=center_point,
+                speed_limit=30.0,
+                lane_width=3.5
+            )
+            incoming_road.add_lane(incoming_lane)
+            self.road_network.add_road(incoming_road)
+            incoming_lanes.append(incoming_lane.lane_id)
+            intersection.add_lane(incoming_lane.lane_id)
+            
+            # Create outgoing road (away from center)
+            outgoing_road = Road(len(self.road_network.roads), f"{direction_name}_Outgoing")
+            outgoing_lane = Lane(
+                lane_id=len(self.road_network.all_lanes),
+                start_point=center_point,
+                end_point=far_point,
+                speed_limit=30.0,
+                lane_width=3.5
+            )
+            outgoing_road.add_lane(outgoing_lane)
+            self.road_network.add_road(outgoing_road)
+            outgoing_lanes.append(outgoing_lane.lane_id)
+        
+        # Connect incoming lanes to opposite outgoing lanes (straight through)
+        for i, incoming_lane_id in enumerate(incoming_lanes):
+            incoming_lane = self.road_network.get_lane(incoming_lane_id)
+            # Opposite direction is (i + 2) % 4
+            opposite_idx = (i + 2) % 4
+            outgoing_lane_id = outgoing_lanes[opposite_idx]
+            incoming_lane.add_connected_lane(outgoing_lane_id)
+        
+        # Add intersection to network
+        self.road_network.add_intersection(intersection)
         
         print(f"Created road network with {len(self.road_network.all_lanes)} lanes")
-        print(f"Road length: {self.road_network.get_lane_length(list(self.road_network.all_lanes.keys())[0]):.1f}m")
+        print(f"Number of roads: {len(self.road_network.roads)}")
+        print(f"Number of intersections: {len(self.road_network.intersections)}")
+        
+        # Print lane information
+        for lane_id, lane in self.road_network.all_lanes.items():
+            connected = f", connected to: {lane.connected_lanes}" if lane.connected_lanes else ""
+            print(f"Lane {lane_id}: {lane.start_point.x:.0f},{lane.start_point.y:.0f} -> {lane.end_point.x:.0f},{lane.end_point.y:.0f} (length: {lane.length:.0f}m){connected}")
+    
+    def _get_incoming_lanes(self) -> List[int]:
+        """
+        Get all incoming lanes (lanes that have connected lanes).
+        These are typically the lanes that approach intersections.
+        
+        Returns:
+            List of incoming lane IDs
+        """
+        incoming_lanes = []
+        for lane_id, lane in self.road_network.all_lanes.items():
+            # If a lane has connected lanes, it's an incoming lane
+            if lane.connected_lanes:
+                incoming_lanes.append(lane_id)
+        return incoming_lanes
     
     def _spawn_initial_vehicles(self):
         """Spawn initial vehicles on the road network."""
@@ -105,8 +183,14 @@ class TrafficSimulationModel(mesa.Model):
         if len(self.vehicles) >= self.max_vehicles:
             return
         
-        # Get the first lane (we only have one lane)
-        lane_id = list(self.road_network.all_lanes.keys())[0]
+        # Get all incoming lanes (lanes that lead to the intersection)
+        incoming_lanes = self._get_incoming_lanes()
+        if not incoming_lanes:
+            # Fallback to first lane if no incoming lanes found
+            lane_id = list(self.road_network.all_lanes.keys())[0]
+        else:
+            # Randomly choose an incoming lane
+            lane_id = random.choice(incoming_lanes)
         
         # Create vehicle
         vehicle_id = self.vehicle_counter

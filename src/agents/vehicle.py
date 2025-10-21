@@ -278,10 +278,47 @@ class Vehicle(mesa.Agent):
         # Check if vehicle has reached end of lane
         lane_length = self.model.get_lane_length(self.lane_id)
         if next_position >= lane_length:
-            # Vehicle has reached end of lane - remove it or handle transition
-            self.model.remove_vehicle(self)
+            # Vehicle has reached end of lane - try to transition to connected lane
+            if not self._try_lane_transition():
+                # No connected lane available, remove vehicle
+                self.model.remove_vehicle(self)
         else:
             self.position = next_position
+    
+    def _try_lane_transition(self) -> bool:
+        """
+        Try to transition to a connected lane at the end of current lane.
+        
+        Returns:
+            True if transition successful, False otherwise
+        """
+        current_lane = self.model.road_network.get_lane(self.lane_id)
+        if not current_lane or not current_lane.connected_lanes:
+            return False
+        
+        # Choose first connected lane (straight through for now)
+        # In the future, this could support turns based on routing
+        next_lane_id = current_lane.connected_lanes[0]
+        
+        # Check if the next lane has space at the beginning
+        next_lane_vehicles = self.model.get_vehicles_in_lane(next_lane_id)
+        
+        # Check for vehicles blocking the entry to next lane
+        min_start_distance = 20.0  # Need at least 20m clearance
+        for vehicle in next_lane_vehicles:
+            if vehicle.position < min_start_distance:
+                # Too crowded at the start of next lane
+                # Stop at end of current lane and wait
+                self.speed = 0
+                self.position = self.model.get_lane_length(self.lane_id)
+                return False
+        
+        # Transition to next lane
+        old_lane_id = self.lane_id
+        self.lane_id = next_lane_id
+        self.position = 0.0  # Start at beginning of new lane
+        print(f"Vehicle {self.unique_id} transitioned from lane {old_lane_id} to lane {next_lane_id}")
+        return True
     
     def _check_collision_after_move(self, new_position: float) -> bool:
         """
@@ -318,17 +355,15 @@ class Vehicle(mesa.Agent):
         Returns:
             Tuple of (x, y) coordinates for visualization
         """
-        # Get lane position
-        lane_x, lane_y = self.model.get_lane_position(self.lane_id)
+        # Get the lane and use its method to calculate position
+        lane = self.model.road_network.get_lane(self.lane_id)
+        if not lane:
+            return (0.0, 0.0)
         
-        # Calculate position along lane
-        lane_direction = self.model.get_lane_direction(self.lane_id)
+        # Use the lane's built-in method for accurate position calculation
+        point = lane.get_position_at_distance(self.position)
         
-        # Simple linear interpolation for now
-        visual_x = lane_x + lane_direction[0] * self.position
-        visual_y = lane_y + lane_direction[1] * self.position
-        
-        return visual_x, visual_y
+        return point.x, point.y
     
     def get_visual_angle(self) -> float:
         """
