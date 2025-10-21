@@ -85,13 +85,17 @@ class TrafficVisualization:
         # Running state
         self.running = True
         self.paused = False
+
+        # mouse
+        self.dragging = False
         
         # Car sprites
         self.car_sprites = {}
-        self._load_car_sprites()
+        # self._load_car_sprites()
     
     def _load_car_sprites(self):
         """Load car sprites from internet or create simple ones."""
+        # TODO downloading sprites does not make sense
         try:
             # Try to load car images from internet
             self._load_car_from_internet()
@@ -99,7 +103,10 @@ class TrafficVisualization:
             print(f"Could not load car images from internet: {e}")
             print("Using simple car shapes instead")
             self._create_simple_car_sprites()
+        # self._create_simple_car_sprites()
     
+    # TODO
+    # does not exist actually xd
     def _load_car_from_internet(self):
         """Load car images from internet."""
         # Simple car image URLs (you can replace these with better ones)
@@ -445,14 +452,14 @@ class TrafficVisualization:
                     self.dragging = False
             
             elif event.type == pygame.MOUSEMOTION:
-                if hasattr(self, 'dragging') and self.dragging:
+                if self.dragging:
                     current_mouse_pos = pygame.mouse.get_pos()
                     dx = current_mouse_pos[0] - self.last_mouse_pos[0]
                     dy = current_mouse_pos[1] - self.last_mouse_pos[1]
                     
                     # Convert screen movement to world movement
-                    self.pan_x -= dx / self.zoom
-                    self.pan_y -= dy / self.zoom
+                    self.pan_x += dx / self.zoom
+                    self.pan_y += dy / self.zoom
                     
                     self.last_mouse_pos = current_mouse_pos
     
