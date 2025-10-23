@@ -102,6 +102,16 @@ class TrafficSimulationModel(mesa.Model):
         
         incoming_lanes = []
         outgoing_lanes = []
+
+        lane_width=3.5
+        lane_offset=lane_width
+
+        corssOffsets={
+            'East': Point(0, lane_offset),
+            'North': Point(-lane_offset, 0),
+            'West': Point(0, -lane_offset),
+            'South': Point(lane_offset, 0)
+        }
         
         for idx, (direction_name, direction_offset) in enumerate(directions):
             # Calculate far point for this direction
@@ -114,10 +124,10 @@ class TrafficSimulationModel(mesa.Model):
             incoming_road = Road(len(self.road_network.roads), f"{direction_name}_Incoming")
             incoming_lane = Lane(
                 lane_id=len(self.road_network.all_lanes),
-                start_point=far_point,
-                end_point=center_point,
+                start_point= far_point + corssOffsets[direction_name],
+                end_point=center_point + corssOffsets[direction_name],
                 speed_limit=30.0,
-                lane_width=3.5
+                lane_width=lane_width
             )
             incoming_road.add_lane(incoming_lane)
             self.road_network.add_road(incoming_road)
@@ -128,10 +138,10 @@ class TrafficSimulationModel(mesa.Model):
             outgoing_road = Road(len(self.road_network.roads), f"{direction_name}_Outgoing")
             outgoing_lane = Lane(
                 lane_id=len(self.road_network.all_lanes),
-                start_point=center_point,
-                end_point=far_point,
+                start_point=center_point - corssOffsets[direction_name],
+                end_point=far_point - corssOffsets[direction_name],
                 speed_limit=30.0,
-                lane_width=3.5
+                lane_width=lane_width
             )
             outgoing_road.add_lane(outgoing_lane)
             self.road_network.add_road(outgoing_road)

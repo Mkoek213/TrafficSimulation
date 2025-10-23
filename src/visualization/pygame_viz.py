@@ -225,10 +225,12 @@ class TrafficVisualization:
         end_x, end_y = self.world_to_screen(lane.end_point.x, lane.end_point.y)
         
         # Draw road (MUCH thicker line for laptop visibility)
-        road_width = int(lane.lane_width * self.zoom * 20)  # Make roads MUCH wider
-        if road_width < 20:
-            road_width = 20
+        # road_width = int(lane.lane_width * self.zoom * 20)  # Make roads MUCH wider
+        # if road_width < 20:
+        #     road_width = 20
+        road_width = int(lane.lane_width * self.zoom)
         
+
         pygame.draw.line(self.screen, self.colors['road'], 
                         (start_x, start_y), (end_x, end_y), road_width)
         
@@ -252,12 +254,14 @@ class TrafficVisualization:
         angle = vehicle.get_visual_angle()
         
         # Vehicle dimensions (scaled by zoom)
-        length = int(vehicle.length * self.zoom * 8)  # Make cars MUCH bigger
-        width = int(vehicle.width * self.zoom * 8)    # Make cars MUCH bigger
+        # length = int(vehicle.length * self.zoom * 8)  # Make cars MUCH bigger
+        # width = int(vehicle.width * self.zoom * 8)    # Make cars MUCH bigger
+        length = int(vehicle.length * self.zoom)  # Make cars MUCH bigger
+        width = int(vehicle.width * self.zoom)    # Make cars MUCH bigger
         
         # Ensure minimum size
-        length = max(32, length)
-        width = max(16, width)
+        # length = max(32, length)
+        # width = max(16, width)
         
         # Try to use car sprite, fallback to drawn shape
         color_name = self._get_car_color_name(vehicle.color)
@@ -267,7 +271,7 @@ class TrafficVisualization:
             self._draw_car_shape(screen_x, screen_y, length, width, angle, vehicle.color)
         
         # Draw speed indicator (small line showing speed)
-        if self.zoom > 0.5:  # Only show when zoomed in
+        if self.zoom > 1.0:  # Only show when zoomed in
             speed_line_length = int(vehicle.speed * self.zoom * 0.5)
             if speed_line_length > 0:
                 end_x = screen_x + int(speed_line_length * math.cos(angle))
@@ -440,7 +444,7 @@ class TrafficVisualization:
                 # Zoom in/out
                 zoom_factor = 1.1 if event.y > 0 else 0.9
                 self.zoom *= zoom_factor
-                self.zoom = max(0.1, min(5.0, self.zoom))  # Clamp zoom
+                self.zoom = max(0.1, min(8.0, self.zoom))  # Clamp zoom
             
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # Left mouse button
