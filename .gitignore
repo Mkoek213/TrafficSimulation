@@ -208,3 +208,35 @@ __marimo__/
 
 # Conda environment file
 environment.yml
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# DRIFT Dataset - Downloaded data
+eda/data/drift/*
+!eda/data/drift/.gitkeep
+
+# Generated visualization videos
+eda/data/vis_videos/*
+!eda/data/vis_videos/.gitkeep
+
+# EDA outputs
+eda/output/*
+!eda/output/.gitkeep
+
+# Video files anywhere
+*.mp4
+*.avi
+*.mov
+
+# CSV files (trajectory data)
+eda/data/drift/**/*.csv
+
+# Large media files (keep small ones in git if needed)
+eda/data/media/*.Mp4
+eda/data/media/*.MOV
+
+# Jupyter notebook checkpoints (already covered above but being explicit)
+eda/notebooks/.ipynb_checkpoints/
