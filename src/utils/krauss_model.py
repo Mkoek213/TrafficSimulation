@@ -74,10 +74,12 @@ class KraussModel:
         max_speed_above_leader = leader_speed + 5.0  # Don't exceed leader by more than 5 m/s
         safe_speed = min(safe_speed, max_speed_above_leader)
         
-        # Increase minimum safe distance significantly
-        min_safe_distance = 30.0  # meters - reduced from 40m to allow closer following
+        # More lenient safe distance - allow closer following
+        min_safe_distance = 10.0  # meters - allow closer following (reduced from 15.0)
         if distance_to_leader < min_safe_distance:
-            safe_speed = min(safe_speed, leader_speed * 0.5)  # Slow down if too close
+            # Gradual speed reduction instead of sudden cut
+            speed_reduction_factor = max(0.8, distance_to_leader / min_safe_distance)
+            safe_speed = min(safe_speed, leader_speed * speed_reduction_factor)
         
         # Ensure safe speed is not negative
         return max(0.0, safe_speed)
@@ -98,13 +100,15 @@ class KraussModel:
             Desired speed (m/s)
         """
         if leader_speed is None or distance_to_leader > 100:  # No leader or very far
-            # Free flow: accelerate towards maximum speed
-            desired_speed = min(self.max_speed, current_speed + self.max_acceleration)
+            # Free flow: accelerate towards maximum speed more aggressively
+            desired_speed = min(self.max_speed, current_speed + self.max_acceleration * 1.5)
         else:
             # Car-following: consider safe speed
             safe_speed = self.calculate_safe_speed(current_speed, distance_to_leader, leader_speed)
             # Allow acceleration but don't exceed safe speed
-            desired_speed = min(safe_speed, current_speed + self.max_acceleration)
+            # Also ensure we don't go too slow - maintain reasonable speed (much higher)
+            min_reasonable_speed = max(15.0, leader_speed * 0.90) if leader_speed else 15.0
+            desired_speed = max(min_reasonable_speed, min(safe_speed, current_speed + self.max_acceleration * 1.3))
         
         return desired_speed
     

@@ -1,6 +1,7 @@
 mesa
 pygame
 numpy
+pandas
 matplotlib
 osmnx
 networkx
@@ -8,3 +9,4 @@ geopandas
 folium
 requests
 Pillow
+opencv-python

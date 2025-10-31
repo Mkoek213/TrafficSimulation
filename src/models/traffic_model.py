@@ -8,7 +8,8 @@ It coordinates vehicles, road networks, and simulation state.
 import numpy as np
 import mesa
 from mesa.space import AgentSet, ContinuousSpace
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
+from ..models.road_network import Intersection
 import random
 
 from ..agents.vehicle import Vehicle
@@ -32,8 +33,9 @@ class TrafficSimulationModel(mesa.Model):
                  width: int = 1000,
                  height: int = 1000,
                  time_step: float = 0.1,  # seconds
-                 vehicle_spawn_rate: float = 0.1,  # vehicles per second (one every 10 seconds)
-                 max_vehicles: int = 100):
+                 vehicle_spawn_rate: float = 0.5,  # vehicles per second (more frequent spawning)
+                 max_vehicles: int = 150,
+                 custom_lanes_path: Optional[str] = None):
         """
         Initialize the traffic simulation model.
         
@@ -43,6 +45,7 @@ class TrafficSimulationModel(mesa.Model):
             time_step: Time step for simulation (seconds)
             vehicle_spawn_rate: Rate of vehicle spawning (vehicles/second)
             max_vehicles: Maximum number of vehicles in simulation
+            custom_lanes_path: Path to JSON file with custom lanes (if None, uses default network)
         """
         super().__init__()
         
@@ -66,6 +69,10 @@ class TrafficSimulationModel(mesa.Model):
         self.spawn_timer = 0.0
         self.current_time = 0.0
         
+        # Image dimensions (will be set when loading custom lanes, defaults for test network)
+        self.image_width = 3840  # Default, will be overridden if custom lanes loaded
+        self.image_height = 2160  # Default, will be overridden if custom lanes loaded
+        
         # Statistics
         self.stats = {
             'total_vehicles_spawned': 0,
@@ -76,13 +83,34 @@ class TrafficSimulationModel(mesa.Model):
         }
         
         # Initialize road network
-        self._create_test_road_network()
+        if custom_lanes_path:
+            self._create_custom_road_network(custom_lanes_path)
+        else:
+            self._create_test_road_network()
         
         # Spawn vehicles gradually over time
         self._spawn_initial_vehicles()
     
+    def _get_intersection_for_lane(self, lane_id: int) -> Optional['Intersection']:
+        """
+        Get the intersection that a lane connects to.
+        
+        Args:
+            lane_id: ID of the lane
+            
+        Returns:
+            Intersection object or None if not found
+        """
+        for intersection in self.road_network.intersections:
+            if lane_id in intersection.connected_lanes:
+                return intersection
+        return None
+    
     def _create_test_road_network(self):
-        """Create a simple test road network with an intersection."""
+        """Create Korean crossing layout matching the image:
+        - Horizontal: 4 lanes (2 going left, 2 going right)
+        - Vertical: 4 lanes (2 going top-to-bottom, 2 going bottom-to-top)
+        """
         from ..models.road_network import Road, Lane, Intersection
         
         # Create intersection at origin
@@ -91,81 +119,657 @@ class TrafficSimulationModel(mesa.Model):
         
         # Define road parameters
         road_length = 1500.0  # 1.5km in each direction
+        lane_width = 3.5  # meters
+        lane_spacing = lane_width  # Spacing between lanes
         
-        # Create 4 roads: East, North, West, South
-        directions = [
-            ('East', Point(road_length, 0)),      # East
-            ('North', Point(0, road_length)),     # North
-            ('West', Point(-road_length, 0)),     # West
-            ('South', Point(0, -road_length))     # South
-        ]
+        # Lane IDs tracking
+        lane_id_counter = 0
         
-        incoming_lanes = []
-        outgoing_lanes = []
-
-        lane_width=3.5
-        lane_offset=lane_width
-
-        corssOffsets={
-            'East': Point(0, lane_offset),
-            'North': Point(-lane_offset, 0),
-            'West': Point(0, -lane_offset),
-            'South': Point(lane_offset, 0)
+        # Dictionary to store lanes by direction and type
+        lanes_dict = {
+            'East': {'incoming': [], 'outgoing': []},
+            'West': {'incoming': [], 'outgoing': []},
+            'North': {'incoming': [], 'outgoing': []},
+            'South': {'incoming': [], 'outgoing': []}
         }
         
-        for idx, (direction_name, direction_offset) in enumerate(directions):
-            # Calculate far point for this direction
-            far_point = Point(
-                center_point.x + direction_offset.x,
-                center_point.y + direction_offset.y
-            )
+        # === HORIZONTAL ROADS: 4 lanes total (2 East, 2 West) ===
+        # East incoming (2 lanes going West)
+        east_incoming_road = Road(len(self.road_network.roads), "East_Incoming")
+        for lane_idx in range(2):
+            lane_offset = (lane_idx - 1.0) * lane_spacing  # -1.0, 0.0 spacing
+            start_point = Point(road_length, lane_offset)
+            end_point = Point(0, lane_offset)
             
-            # Create incoming road (toward center)
-            incoming_road = Road(len(self.road_network.roads), f"{direction_name}_Incoming")
-            incoming_lane = Lane(
-                lane_id=len(self.road_network.all_lanes),
-                start_point= far_point + corssOffsets[direction_name],
-                end_point=center_point + corssOffsets[direction_name],
+            lane = Lane(
+                lane_id=lane_id_counter,
+                start_point=start_point,
+                end_point=end_point,
                 speed_limit=30.0,
                 lane_width=lane_width
             )
-            incoming_road.add_lane(incoming_lane)
-            self.road_network.add_road(incoming_road)
-            incoming_lanes.append(incoming_lane.lane_id)
-            intersection.add_lane(incoming_lane.lane_id)
-            
-            # Create outgoing road (away from center)
-            outgoing_road = Road(len(self.road_network.roads), f"{direction_name}_Outgoing")
-            outgoing_lane = Lane(
-                lane_id=len(self.road_network.all_lanes),
-                start_point=center_point - corssOffsets[direction_name],
-                end_point=far_point - corssOffsets[direction_name],
-                speed_limit=30.0,
-                lane_width=lane_width
-            )
-            outgoing_road.add_lane(outgoing_lane)
-            self.road_network.add_road(outgoing_road)
-            outgoing_lanes.append(outgoing_lane.lane_id)
+            east_incoming_road.add_lane(lane)
+            lanes_dict['East']['incoming'].append(lane_id_counter)
+            intersection.add_lane(lane_id_counter)
+            lane_id_counter += 1
         
-        # Connect incoming lanes to opposite outgoing lanes (straight through)
-        for i, incoming_lane_id in enumerate(incoming_lanes):
-            incoming_lane = self.road_network.get_lane(incoming_lane_id)
-            # Opposite direction is (i + 2) % 4
-            opposite_idx = (i + 2) % 4
-            outgoing_lane_id = outgoing_lanes[opposite_idx]
-            incoming_lane.add_connected_lane(outgoing_lane_id)
+        # Set adjacent lanes for East incoming
+        for i, lane in enumerate(east_incoming_road.lanes):
+            if i > 0:
+                lane.left_lane_id = east_incoming_road.lanes[i-1].lane_id
+            if i < len(east_incoming_road.lanes) - 1:
+                lane.right_lane_id = east_incoming_road.lanes[i+1].lane_id
+        
+        self.road_network.add_road(east_incoming_road)
+        
+        # East outgoing (2 lanes going East)
+        east_outgoing_road = Road(len(self.road_network.roads), "East_Outgoing")
+        for lane_idx in range(2):
+            lane_offset = (lane_idx - 1.0) * lane_spacing
+            start_point = Point(0, lane_offset)
+            end_point = Point(road_length, lane_offset)
+            
+            lane = Lane(
+                lane_id=lane_id_counter,
+                start_point=start_point,
+                end_point=end_point,
+                speed_limit=30.0,
+                lane_width=lane_width
+            )
+            east_outgoing_road.add_lane(lane)
+            lanes_dict['East']['outgoing'].append(lane_id_counter)
+            lane_id_counter += 1
+        
+        # Set adjacent lanes for East outgoing
+        for i, lane in enumerate(east_outgoing_road.lanes):
+            if i > 0:
+                lane.left_lane_id = east_outgoing_road.lanes[i-1].lane_id
+            if i < len(east_outgoing_road.lanes) - 1:
+                lane.right_lane_id = east_outgoing_road.lanes[i+1].lane_id
+        
+        self.road_network.add_road(east_outgoing_road)
+        
+        # West incoming (2 lanes going East)
+        west_incoming_road = Road(len(self.road_network.roads), "West_Incoming")
+        for lane_idx in range(2):
+            lane_offset = (lane_idx - 1.0) * lane_spacing
+            start_point = Point(-road_length, lane_offset)
+            end_point = Point(0, lane_offset)
+            
+            lane = Lane(
+                lane_id=lane_id_counter,
+                start_point=start_point,
+                end_point=end_point,
+                speed_limit=30.0,
+                lane_width=lane_width
+            )
+            west_incoming_road.add_lane(lane)
+            lanes_dict['West']['incoming'].append(lane_id_counter)
+            intersection.add_lane(lane_id_counter)
+            lane_id_counter += 1
+        
+        # Set adjacent lanes for West incoming
+        for i, lane in enumerate(west_incoming_road.lanes):
+            if i > 0:
+                lane.left_lane_id = west_incoming_road.lanes[i-1].lane_id
+            if i < len(west_incoming_road.lanes) - 1:
+                lane.right_lane_id = west_incoming_road.lanes[i+1].lane_id
+        
+        self.road_network.add_road(west_incoming_road)
+        
+        # West outgoing (2 lanes going West)
+        west_outgoing_road = Road(len(self.road_network.roads), "West_Outgoing")
+        for lane_idx in range(2):
+            lane_offset = (lane_idx - 1.0) * lane_spacing
+            start_point = Point(0, lane_offset)
+            end_point = Point(-road_length, lane_offset)
+            
+            lane = Lane(
+                lane_id=lane_id_counter,
+                start_point=start_point,
+                end_point=end_point,
+                speed_limit=30.0,
+                lane_width=lane_width
+            )
+            west_outgoing_road.add_lane(lane)
+            lanes_dict['West']['outgoing'].append(lane_id_counter)
+            lane_id_counter += 1
+        
+        # Set adjacent lanes for West outgoing
+        for i, lane in enumerate(west_outgoing_road.lanes):
+            if i > 0:
+                lane.left_lane_id = west_outgoing_road.lanes[i-1].lane_id
+            if i < len(west_outgoing_road.lanes) - 1:
+                lane.right_lane_id = west_outgoing_road.lanes[i+1].lane_id
+        
+        self.road_network.add_road(west_outgoing_road)
+        
+        # === VERTICAL ROADS: 4 lanes total (2 North, 2 South) ===
+        # North incoming (2 lanes going South - top to bottom)
+        north_incoming_road = Road(len(self.road_network.roads), "North_Incoming")
+        for lane_idx in range(2):
+            lane_offset = (lane_idx - 1.0) * lane_spacing
+            start_point = Point(lane_offset, road_length)
+            end_point = Point(lane_offset, 0)
+            
+            lane = Lane(
+                lane_id=lane_id_counter,
+                start_point=start_point,
+                end_point=end_point,
+                speed_limit=30.0,
+                lane_width=lane_width
+            )
+            north_incoming_road.add_lane(lane)
+            lanes_dict['North']['incoming'].append(lane_id_counter)
+            intersection.add_lane(lane_id_counter)
+            lane_id_counter += 1
+        
+        # Set adjacent lanes for North incoming
+        for i, lane in enumerate(north_incoming_road.lanes):
+            if i > 0:
+                lane.left_lane_id = north_incoming_road.lanes[i-1].lane_id
+            if i < len(north_incoming_road.lanes) - 1:
+                lane.right_lane_id = north_incoming_road.lanes[i+1].lane_id
+        
+        self.road_network.add_road(north_incoming_road)
+        
+        # North outgoing (2 lanes going North - bottom to top)
+        north_outgoing_road = Road(len(self.road_network.roads), "North_Outgoing")
+        for lane_idx in range(2):
+            lane_offset = (lane_idx - 1.0) * lane_spacing
+            start_point = Point(lane_offset, 0)
+            end_point = Point(lane_offset, road_length)
+            
+            lane = Lane(
+                lane_id=lane_id_counter,
+                start_point=start_point,
+                end_point=end_point,
+                speed_limit=30.0,
+                lane_width=lane_width
+            )
+            north_outgoing_road.add_lane(lane)
+            lanes_dict['North']['outgoing'].append(lane_id_counter)
+            lane_id_counter += 1
+        
+        # Set adjacent lanes for North outgoing
+        for i, lane in enumerate(north_outgoing_road.lanes):
+            if i > 0:
+                lane.left_lane_id = north_outgoing_road.lanes[i-1].lane_id
+            if i < len(north_outgoing_road.lanes) - 1:
+                lane.right_lane_id = north_outgoing_road.lanes[i+1].lane_id
+        
+        self.road_network.add_road(north_outgoing_road)
+        
+        # South incoming (2 lanes going North - bottom to top)
+        south_incoming_road = Road(len(self.road_network.roads), "South_Incoming")
+        for lane_idx in range(2):
+            lane_offset = (lane_idx - 1.0) * lane_spacing
+            start_point = Point(lane_offset, -road_length)
+            end_point = Point(lane_offset, 0)
+            
+            lane = Lane(
+                lane_id=lane_id_counter,
+                start_point=start_point,
+                end_point=end_point,
+                speed_limit=30.0,
+                lane_width=lane_width
+            )
+            south_incoming_road.add_lane(lane)
+            lanes_dict['South']['incoming'].append(lane_id_counter)
+            intersection.add_lane(lane_id_counter)
+            lane_id_counter += 1
+        
+        # Set adjacent lanes for South incoming
+        for i, lane in enumerate(south_incoming_road.lanes):
+            if i > 0:
+                lane.left_lane_id = south_incoming_road.lanes[i-1].lane_id
+            if i < len(south_incoming_road.lanes) - 1:
+                lane.right_lane_id = south_incoming_road.lanes[i+1].lane_id
+        
+        self.road_network.add_road(south_incoming_road)
+        
+        # South outgoing (2 lanes going South - top to bottom)
+        south_outgoing_road = Road(len(self.road_network.roads), "South_Outgoing")
+        for lane_idx in range(2):
+            lane_offset = (lane_idx - 1.0) * lane_spacing
+            start_point = Point(lane_offset, 0)
+            end_point = Point(lane_offset, -road_length)
+            
+            lane = Lane(
+                lane_id=lane_id_counter,
+                start_point=start_point,
+                end_point=end_point,
+                speed_limit=30.0,
+                lane_width=lane_width
+            )
+            south_outgoing_road.add_lane(lane)
+            lanes_dict['South']['outgoing'].append(lane_id_counter)
+            lane_id_counter += 1
+        
+        # Set adjacent lanes for South outgoing
+        for i, lane in enumerate(south_outgoing_road.lanes):
+            if i > 0:
+                lane.left_lane_id = south_outgoing_road.lanes[i-1].lane_id
+            if i < len(south_outgoing_road.lanes) - 1:
+                lane.right_lane_id = south_outgoing_road.lanes[i+1].lane_id
+        
+        self.road_network.add_road(south_outgoing_road)
+        
+        # === CONNECT LANES AT INTERSECTION ===
+        # East incoming -> West outgoing (straight)
+        for i, east_in_lane_id in enumerate(lanes_dict['East']['incoming']):
+            east_lane = self.road_network.get_lane(east_in_lane_id)
+            if east_lane:
+                west_out_lane_id = lanes_dict['West']['outgoing'][i]
+                east_lane.add_connected_lane(west_out_lane_id, 'straight')
+        
+        # West incoming -> East outgoing (straight)
+        for i, west_in_lane_id in enumerate(lanes_dict['West']['incoming']):
+            west_lane = self.road_network.get_lane(west_in_lane_id)
+            if west_lane:
+                east_out_lane_id = lanes_dict['East']['outgoing'][i]
+                west_lane.add_connected_lane(east_out_lane_id, 'straight')
+        
+        # North incoming -> South outgoing (straight)
+        for i, north_in_lane_id in enumerate(lanes_dict['North']['incoming']):
+            north_lane = self.road_network.get_lane(north_in_lane_id)
+            if north_lane:
+                south_out_lane_id = lanes_dict['South']['outgoing'][i]
+                north_lane.add_connected_lane(south_out_lane_id, 'straight')
+        
+        # South incoming -> North outgoing (straight)
+        for i, south_in_lane_id in enumerate(lanes_dict['South']['incoming']):
+            south_lane = self.road_network.get_lane(south_in_lane_id)
+            if south_lane:
+                north_out_lane_id = lanes_dict['North']['outgoing'][i]
+                south_lane.add_connected_lane(north_out_lane_id, 'straight')
+        
+        # === SET UP TRAFFIC LIGHT PHASES ===
+        # Phase 1: East-West green (horizontal)
+        phase1_duration = 25.0
+        phase1_states = {}
+        for lane_id in lanes_dict['East']['incoming'] + lanes_dict['West']['incoming']:
+            phase1_states[lane_id] = 'green'
+        for lane_id in lanes_dict['North']['incoming'] + lanes_dict['South']['incoming']:
+            phase1_states[lane_id] = 'red'
+        
+        # Phase 2: Yellow for East-West
+        phase2_duration = 3.0
+        phase2_states = {}
+        for lane_id in lanes_dict['East']['incoming'] + lanes_dict['West']['incoming']:
+            phase2_states[lane_id] = 'yellow'
+        for lane_id in lanes_dict['North']['incoming'] + lanes_dict['South']['incoming']:
+            phase2_states[lane_id] = 'red'
+        
+        # Phase 3: North-South green (vertical)
+        phase3_duration = 20.0
+        phase3_states = {}
+        for lane_id in lanes_dict['East']['incoming'] + lanes_dict['West']['incoming']:
+            phase3_states[lane_id] = 'red'
+        for lane_id in lanes_dict['North']['incoming'] + lanes_dict['South']['incoming']:
+            phase3_states[lane_id] = 'green'
+        
+        # Phase 4: Yellow for North-South
+        phase4_duration = 3.0
+        phase4_states = {}
+        for lane_id in lanes_dict['East']['incoming'] + lanes_dict['West']['incoming']:
+            phase4_states[lane_id] = 'red'
+        for lane_id in lanes_dict['North']['incoming'] + lanes_dict['South']['incoming']:
+            phase4_states[lane_id] = 'yellow'
+        
+        intersection.set_traffic_light_phases([
+            (phase1_duration, phase1_states),
+            (phase2_duration, phase2_states),
+            (phase3_duration, phase3_states),
+            (phase4_duration, phase4_states)
+        ])
         
         # Add intersection to network
         self.road_network.add_intersection(intersection)
         
-        print(f"Created road network with {len(self.road_network.all_lanes)} lanes")
+        print(f"Created Korean crossing layout with {len(self.road_network.all_lanes)} lanes")
         print(f"Number of roads: {len(self.road_network.roads)}")
         print(f"Number of intersections: {len(self.road_network.intersections)}")
         
         # Print lane information
         for lane_id, lane in self.road_network.all_lanes.items():
             connected = f", connected to: {lane.connected_lanes}" if lane.connected_lanes else ""
-            print(f"Lane {lane_id}: {lane.start_point.x:.0f},{lane.start_point.y:.0f} -> {lane.end_point.x:.0f},{lane.end_point.y:.0f} (length: {lane.length:.0f}m){connected}")
+            route_types = f", routes: {lane.route_types}" if lane.route_types else ""
+            print(f"Lane {lane_id}: {lane.start_point.x:.0f},{lane.start_point.y:.0f} -> {lane.end_point.x:.0f},{lane.end_point.y:.0f} (length: {lane.length:.0f}m){connected}{route_types}")
+    
+    def _create_custom_road_network(self, lanes_json_path: str):
+        """Create road network from custom marked lanes."""
+        import json
+        from pathlib import Path
+        from ..models.road_network import Road, Lane, Point
+        
+        # Load lane data
+        with open(lanes_json_path) as f:
+            lane_data = json.load(f)
+        
+        # Store lanes_data for later use (checking manual spawn points)
+        self.lanes_data = lane_data
+        
+        # Store image dimensions for edge detection
+        self.image_width = lane_data.get('image_width', 3840)
+        self.image_height = lane_data.get('image_height', 2160)
+        
+        # Store image points for each lane (for spawn validation)
+        self.lane_image_points: Dict[int, List[Tuple[int, int]]] = {}
+        
+        # Track which lanes have manual spawn points
+        self.manual_spawn_lanes: set = set()
+        
+        # Transformation parameters
+        # Use the original offset values to ensure vehicles spawn at correct positions
+        # The offset is necessary to properly align image coordinates with world coordinates
+        offset_x = lane_data.get('offset_x', 2064.0)  # ROI center X
+        offset_y = lane_data.get('offset_y', 526.0)   # ROI center Y
+        scale = lane_data.get('scale', 0.3507)  # pixels per meter
+        
+        def image_to_world(img_x: float, img_y: float) -> Point:
+            """Convert image coordinates to world coordinates."""
+            world_x = (img_x - offset_x) / scale
+            world_y = (offset_y - img_y) / scale  # Flip Y-axis
+            return Point(world_x, world_y)
+        
+        def world_to_image(world_x: float, world_y: float) -> Tuple[float, float]:
+            """Convert world coordinates to image coordinates."""
+            img_x = world_x * scale + offset_x
+            img_y = offset_y - world_y * scale  # Flip Y-axis
+            return (img_x, img_y)
+        
+        lanes_list = lane_data['lanes']
+        road_id = 0
+        
+        print(f"Creating custom road network from {len(lanes_list)} marked lanes...")
+        
+        for lane_info in lanes_list:
+            lane_id = lane_info['lane_id']
+            points = lane_info['points']
+            
+            if len(points) < 2:
+                print(f"⚠ Skipping lane {lane_id}: needs at least 2 points")
+                continue
+            
+            # Convert points to world coordinates
+            world_points = []
+            for px, py in points:
+                world_points.append(image_to_world(px, py))
+            
+            # Determine start and end points based on spawn location
+            # For lanes that loop back, find the actual start/end points
+            if lane_id in [1, 2]:
+                # Lanes 1, 2: spawn at left beginning (leftmost point)
+                # Find the point with minimum x coordinate (leftmost point)
+                min_x_idx = 0
+                min_x = points[0][0]
+                max_x_idx = 0
+                max_x = points[0][0]
+                for i, (px, py) in enumerate(points):
+                    if px < min_x:
+                        min_x = px
+                        min_x_idx = i
+                    if px > max_x:
+                        max_x = px
+                        max_x_idx = i
+                
+                # Use leftmost point as start, rightmost as end
+                start_point = world_points[min_x_idx]
+                end_point = world_points[max_x_idx]
+            elif lane_id in [4, 5]:
+                # Lanes 4, 5: spawn at right beginning (rightmost point)
+                # Find the point with maximum x coordinate (rightmost point)
+                min_x_idx = 0
+                min_x = points[0][0]
+                max_x_idx = 0
+                max_x = points[0][0]
+                for i, (px, py) in enumerate(points):
+                    if px < min_x:
+                        min_x = px
+                        min_x_idx = i
+                    if px > max_x:
+                        max_x = px
+                        max_x_idx = i
+                
+                # Use rightmost point as start, leftmost as end
+                start_point = world_points[max_x_idx]
+                end_point = world_points[min_x_idx]
+            elif lane_id in [6, 7, 8, 9]:
+                # Lanes 6, 7, 8, 9: spawn at top beginning (topmost point)
+                # Find the point with minimum y coordinate (topmost point in image)
+                min_y_idx = 0
+                min_y = points[0][1]
+                max_y_idx = 0
+                max_y = points[0][1]
+                for i, (px, py) in enumerate(points):
+                    if py < min_y:
+                        min_y = py
+                        min_y_idx = i
+                    if py > max_y:
+                        max_y = py
+                        max_y_idx = i
+                
+                # Use topmost point as start, bottommost as end
+                start_point = world_points[min_y_idx]
+                end_point = world_points[max_y_idx]
+            else:
+                # Other lanes: use first to last
+                start_point = world_points[0]
+                end_point = world_points[-1]
+            
+            # Check if lane is too short (less than 10 meters)
+            lane_length_temp = start_point.distance_to(end_point)
+            if lane_length_temp < 10.0:
+                print(f"⚠ Skipping lane {lane_id}: too short ({lane_length_temp:.1f}m)")
+                continue
+            
+            # Create a road for this lane
+            road = Road(road_id, f"Custom_Lane_{lane_id}")
+            
+            # Create lane with polygon points to detect missing edge
+            # Use points array directly as centerline - vehicles will follow these points exactly
+            centerline_points = None
+            
+            # Check if explicit centerline_points are provided (from mark_centerlines.py)
+            if 'centerline_points' in lane_info and len(lane_info['centerline_points']) > 0:
+                centerline_img_points = lane_info['centerline_points']
+                centerline_world_points = []
+                for px, py in centerline_img_points:
+                    centerline_world_points.append(image_to_world(px, py))
+                
+                # For vertical lanes (6, 7, 8, 9), sort centerline points top to bottom
+                if lane_id in [6, 7, 8, 9]:
+                    centerline_world_points.sort(key=lambda p: -p.y)  # Sort by decreasing y (top to bottom)
+                
+                centerline_points = centerline_world_points
+                print(f"  ✓ Loading {len(centerline_points)} centerline points for lane {lane_id}")
+            else:
+                # No explicit centerline_points - use the points array directly as centerline
+                # These are the points the user drew using mark_lanes.py
+                # Use them in the order they were drawn - this preserves the actual path
+                centerline_points = world_points.copy()
+                
+                # For vertical lanes (6, 7, 8, 9), we need to ensure they go top to bottom
+                # But only if the points aren't already in the correct order
+                if lane_id in [6, 7, 8, 9]:
+                    # Check if points are already ordered top to bottom (by checking first and last y)
+                    if len(centerline_points) >= 2:
+                        first_y = centerline_points[0].y
+                        last_y = centerline_points[-1].y
+                        # In world coordinates, larger y = top (since image y is flipped)
+                        # So if first_y > last_y, it's already top to bottom
+                        if first_y < last_y:
+                            # Points are bottom to top, reverse them
+                            centerline_points.reverse()
+                            print(f"  ✓ Reversed {len(centerline_points)} points for vertical lane {lane_id} (now top to bottom)")
+                        else:
+                            print(f"  ✓ Using {len(centerline_points)} polygon points as centerline for vertical lane {lane_id} (already top to bottom)")
+                    else:
+                        print(f"  ✓ Using {len(centerline_points)} polygon points as centerline for vertical lane {lane_id}")
+                else:
+                    # For horizontal lanes, keep original order
+                    print(f"  ✓ Using {len(centerline_points)} polygon points as centerline for lane {lane_id}")
+            
+            lane = Lane(
+                lane_id=lane_id,
+                start_point=start_point,
+                end_point=end_point,
+                speed_limit=30.0,
+                lane_width=3.5,
+                polygon_points=world_points,  # Pass polygon points to detect missing edge
+                centerline_points=centerline_points  # Pass centerline points if available
+            )
+            
+            # Check if spawn is enabled for this lane (using centerline first point)
+            spawn_enabled = lane_info.get('spawn_enabled', False)
+            if spawn_enabled and centerline_points and len(centerline_points) > 0:
+                # Use first point of centerline as spawn position
+                first_point_world = centerline_points[0]
+                lane.spawn_position = first_point_world
+                # Calculate spawn direction from first to second point (if available)
+                if len(centerline_points) >= 2:
+                    second_point_world = centerline_points[1]
+                    dx = second_point_world.x - first_point_world.x
+                    dy = second_point_world.y - first_point_world.y
+                    length = np.sqrt(dx**2 + dy**2)
+                    if length > 0:
+                        lane.spawn_direction = (dx / length, dy / length)
+                    else:
+                        lane.spawn_direction = lane.direction
+                else:
+                    lane.spawn_direction = lane.direction
+                self.manual_spawn_lanes.add(lane_id)
+                first_img_x, first_img_y = world_to_image(first_point_world.x, first_point_world.y)
+                print(f"  ✓ Spawn enabled for lane {lane_id} at first centerline point: ({first_img_x:.0f}, {first_img_y:.0f})")
+            
+            # Store original image points for edge detection
+            self.lane_image_points[lane_id] = points
+            
+            # Check if manual spawn point is provided in JSON (legacy support)
+            spawn_points = lane_data.get('spawn_points', {})
+            if str(lane_id) in spawn_points and not spawn_enabled:
+                # Only use legacy spawn_points if spawn_enabled is not set
+                spawn_img_x, spawn_img_y = spawn_points[str(lane_id)]
+                # Convert image coordinates to world coordinates
+                spawn_world = image_to_world(spawn_img_x, spawn_img_y)
+                # Project manual spawn point onto lane centerline to ensure vehicles spawn centered
+                spawn_distance = lane.get_distance_from_start(spawn_world)
+                lane.spawn_position = lane.get_position_at_distance(spawn_distance)
+                # Ensure spawn_direction matches lane direction
+                lane.spawn_direction = lane.direction
+                # Mark this as a manual spawn point for filtering
+                self.manual_spawn_lanes.add(lane_id)
+                print(f"  ✓ Using manual spawn point for lane {lane_id}: ({spawn_img_x}, {spawn_img_y}) -> ({spawn_world.x:.1f}, {spawn_world.y:.1f}) -> projected to ({lane.spawn_position.x:.1f}, {lane.spawn_position.y:.1f})")
+            
+            road.add_lane(lane)
+            self.road_network.add_road(road)
+            
+            # Print spawn information if available
+            spawn_info = ""
+            if lane.spawn_position:
+                spawn_info = f", spawn at ({lane.spawn_position.x:.1f}, {lane.spawn_position.y:.1f})"
+            
+            print(f"  Created lane {lane_id}: ({start_point.x:.1f}, {start_point.y:.1f}) -> ({end_point.x:.1f}, {end_point.y:.1f}){spawn_info}")
+            
+            # Debug: Print lane direction for vertical lanes
+            if lane_id in [6, 7, 8, 9]:
+                lane_dir = lane.direction
+                angle_deg = np.arctan2(lane_dir[1], lane_dir[0]) * 180 / np.pi
+                print(f"    Lane {lane_id} direction: ({lane_dir[0]:.3f}, {lane_dir[1]:.3f}), angle: {angle_deg:.1f}°")
+            
+            road_id += 1
+        
+        # After all lanes are created, detect turning lanes (lanes that physically connect)
+        print("\nDetecting turning lanes (physically connected lanes)...")
+        self._detect_turning_lanes()
+        
+        print(f"✅ Created custom road network with {len(self.road_network.all_lanes)} lanes")
+    
+    def _detect_turning_lanes(self):
+        """
+        Automatically detect and connect turning lanes that physically coincide with target lanes.
+        Turning lanes are lanes whose polygons overlap at endpoints with other lanes.
+        Access lanes (that just end) remain unconnected.
+        """
+        connection_threshold = 5.0  # meters - max distance to consider lanes as connecting
+        connections_made = 0
+        
+        # Check all pairs of lanes
+        lane_ids = list(self.road_network.all_lanes.keys())
+        for i, lane_id_a in enumerate(lane_ids):
+            lane_a = self.road_network.get_lane(lane_id_a)
+            if not lane_a:
+                continue
+            
+            for lane_id_b in lane_ids[i+1:]:
+                lane_b = self.road_network.get_lane(lane_id_b)
+                if not lane_b:
+                    continue
+                
+                # Check if lane A's end connects to lane B's start (A -> B turning lane)
+                if lane_a.polygons_overlap_at_endpoints(lane_b, connection_threshold):
+                    # Determine route type based on angle between lanes
+                    route_type = self._determine_route_type(lane_a, lane_b)
+                    
+                    # Connect lane A to lane B
+                    if lane_id_b not in lane_a.connected_lanes:
+                        lane_a.add_connected_lane(lane_id_b, route_type)
+                        connections_made += 1
+                        print(f"  Connected lane {lane_id_a} -> lane {lane_id_b} ({route_type} turn)")
+                
+                # Check if lane B's end connects to lane A's start (B -> A turning lane)
+                if lane_b.polygons_overlap_at_endpoints(lane_a, connection_threshold):
+                    # Determine route type based on angle between lanes
+                    route_type = self._determine_route_type(lane_b, lane_a)
+                    
+                    # Connect lane B to lane A
+                    if lane_id_a not in lane_b.connected_lanes:
+                        lane_b.add_connected_lane(lane_id_a, route_type)
+                        connections_made += 1
+                        print(f"  Connected lane {lane_id_b} -> lane {lane_id_a} ({route_type} turn)")
+        
+        if connections_made > 0:
+            print(f"✅ Automatically connected {connections_made} turning lane(s)")
+        else:
+            print("  No turning lanes detected (all lanes are access lanes)")
+    
+    def _determine_route_type(self, from_lane, to_lane) -> str:
+        """
+        Determine the route type (straight, left, right) based on the angle between lanes.
+        
+        Args:
+            from_lane: Source lane
+            to_lane: Target lane
+            
+        Returns:
+            Route type: 'straight', 'left', or 'right'
+        """
+        # Calculate angle between lane directions
+        from_dir = from_lane.direction
+        to_dir = to_lane.direction
+        
+        # Calculate angle using dot product
+        dot_product = from_dir[0] * to_dir[0] + from_dir[1] * to_dir[1]
+        # Clamp to [-1, 1] for acos
+        dot_product = max(-1.0, min(1.0, dot_product))
+        angle = np.arccos(dot_product)
+        
+        # Calculate cross product to determine left/right
+        cross_product = from_dir[0] * to_dir[1] - from_dir[1] * to_dir[0]
+        
+        # Convert angle to degrees for easier thresholding
+        angle_deg = np.degrees(angle)
+        
+        # Straight: angle < 30 degrees
+        if angle_deg < 30:
+            return 'straight'
+        # Left turn: angle > 30 degrees and cross product > 0 (counter-clockwise)
+        elif cross_product > 0:
+            return 'left'
+        # Right turn: angle > 30 degrees and cross product < 0 (clockwise)
+        else:
+            return 'right'
     
     def _get_incoming_lanes(self) -> List[int]:
         """
@@ -182,51 +786,316 @@ class TrafficSimulationModel(mesa.Model):
                 incoming_lanes.append(lane_id)
         return incoming_lanes
     
+    def _is_lane_at_edge(self, lane_id: int, image_points: List[Tuple[int, int]]) -> bool:
+        """
+        Check if a lane starts at the edge of the image (within threshold).
+        Lanes that start at edges are entry points, not split lanes.
+        
+        Args:
+            lane_id: ID of the lane
+            image_points: List of (x, y) tuples in image coordinates
+            
+        Returns:
+            True if lane starts at an edge, False otherwise
+        """
+        if not image_points:
+            return False
+        
+        # Get the start point (first point) in image coordinates
+        start_x, start_y = image_points[0]
+        
+        # Threshold for considering a point "at the edge" (in pixels)
+        edge_threshold = 100  # pixels from edge
+        
+        # Check if start point is near any edge
+        at_left_edge = start_x <= edge_threshold
+        at_right_edge = start_x >= self.image_width - edge_threshold
+        at_top_edge = start_y <= edge_threshold
+        at_bottom_edge = start_y >= self.image_height - edge_threshold
+        
+        return at_left_edge or at_right_edge or at_top_edge or at_bottom_edge
+    
+    def _get_spawnable_lanes(self) -> List[int]:
+        """
+        Get lanes where vehicles can spawn.
+        Only lanes that:
+        1. Have a missing edge (spawn_position detected)
+        2. Missing edge is near the image edge
+        3. Lane direction points inward (toward center of image)
+        4. Missing edge endpoints are not connected to another lane
+        
+        Returns:
+            List of lane IDs where vehicles can spawn
+        """
+        available_lanes = []
+        edge_threshold = 100  # pixels from edge
+        
+        # Transformation parameters (same as in _create_custom_road_network)
+        offset_x = 2064.0  # ROI center X
+        offset_y = 526.0   # ROI center Y
+        scale = 0.3507     # pixels per meter
+        
+        def world_to_image(world_x: float, world_y: float) -> Tuple[float, float]:
+            """Convert world coordinates back to image coordinates."""
+            img_x = world_x * scale + offset_x
+            img_y = offset_y - world_y * scale  # Flip Y-axis back
+            return img_x, img_y
+        
+        def image_to_world(img_x: float, img_y: float) -> Tuple[float, float]:
+            """Convert image coordinates to world coordinates."""
+            world_x = (img_x - offset_x) / scale
+            world_y = (offset_y - img_y) / scale  # Flip Y-axis
+            return world_x, world_y
+        
+        # Calculate world center (image center in world coordinates)
+        image_center_x = self.image_width / 2.0
+        image_center_y = self.image_height / 2.0
+        world_center_x, world_center_y = image_to_world(image_center_x, image_center_y)
+        
+        # Check for manual spawn points first (from JSON)
+        manual_spawn_points = {}
+        if hasattr(self, 'lane_image_points'):
+            # Try to get spawn_points from lanes_data if available
+            # This would be set if lanes were loaded from JSON with spawn_points
+            pass  # Will check lane.spawn_position instead
+        
+        for lane_id, lane in self.road_network.all_lanes.items():
+            # CRITICAL: Lane MUST have centerlines for vehicles to spawn
+            # Vehicles can ONLY move on centerlines, so they must spawn on centerlines
+            if not lane.centerline_points or len(lane.centerline_points) < 2:
+                continue  # Skip lanes without centerlines - vehicles cannot move on them
+            
+            # Must have spawn_position (either detected or manually set)
+            if not lane.spawn_position:
+                continue
+            
+            # Check if this is a manual spawn point
+            is_manual_spawn = lane_id in getattr(self, 'manual_spawn_lanes', set())
+            if not is_manual_spawn and hasattr(self, 'lanes_data'):
+                # Fallback: check JSON directly
+                spawn_points = self.lanes_data.get('spawn_points', {})
+                is_manual_spawn = str(lane_id) in spawn_points
+                if is_manual_spawn:
+                    # Add to set for future checks
+                    if not hasattr(self, 'manual_spawn_lanes'):
+                        self.manual_spawn_lanes = set()
+                    self.manual_spawn_lanes.add(lane_id)
+            
+            # For manual spawn points, skip all filtering - use them unconditionally
+            if is_manual_spawn:
+                available_lanes.append(lane_id)
+                # Only print once per lane (check if already printed)
+                if not hasattr(self, '_printed_spawn_lanes'):
+                    self._printed_spawn_lanes = set()
+                if lane_id not in self._printed_spawn_lanes:
+                    spawn_img_x, spawn_img_y = world_to_image(lane.spawn_position.x, lane.spawn_position.y)
+                    print(f"  ✓ Lane {lane_id} added (manual spawn at {spawn_img_x:.0f}, {spawn_img_y:.0f})")
+                    self._printed_spawn_lanes.add(lane_id)
+                continue
+            
+            # For auto-detected spawn points, apply filtering
+            
+            # Must have image_points stored (for validation)
+            if lane_id not in self.lane_image_points:
+                continue
+            
+            # Convert spawn position to image coordinates
+            spawn_img_x, spawn_img_y = world_to_image(lane.spawn_position.x, lane.spawn_position.y)
+            
+            # Check if spawn position is near an image edge
+            at_left_edge = spawn_img_x <= edge_threshold
+            at_right_edge = spawn_img_x >= self.image_width - edge_threshold
+            at_top_edge = spawn_img_y <= edge_threshold
+            at_bottom_edge = spawn_img_y >= self.image_height - edge_threshold
+            
+            if not (at_left_edge or at_right_edge or at_top_edge or at_bottom_edge):
+                continue  # Not near edge
+            
+            # Check if lane direction points inward (toward center of image)
+            # Use spawn_direction if available, otherwise use lane direction
+            if lane.spawn_direction:
+                dir_x, dir_y = lane.spawn_direction
+            else:
+                dir_x, dir_y = lane.direction
+            
+            # Vector from spawn position to world center
+            to_center_x = world_center_x - lane.spawn_position.x
+            to_center_y = world_center_y - lane.spawn_position.y
+            to_center_length = np.sqrt(to_center_x**2 + to_center_y**2)
+            
+            if to_center_length > 0:
+                # Normalize
+                to_center_x /= to_center_length
+                to_center_y /= to_center_length
+                
+                # Dot product: positive means pointing toward center
+                dot = dir_x * to_center_x + dir_y * to_center_y
+                
+                if dot <= 0:
+                    continue  # Not pointing inward (pointing away from center)
+                
+                available_lanes.append(lane_id)
+        
+        return available_lanes
+    
+    def _check_spawn_position_safe(self, lane_id: int, position: float) -> bool:
+        """
+        Check if a spawn position is safe (no bounding box overlap with existing vehicles).
+        CRITICAL: This checks position 0 (beginning) to ensure no vehicles spawn on top of each other.
+        
+        Args:
+            lane_id: ID of the lane
+            position: Proposed spawn position along the lane (should be 0.0)
+            
+        Returns:
+            True if position is safe (no overlap), False otherwise
+        """
+        lane = self.road_network.get_lane(lane_id)
+        if not lane:
+            return False
+        
+        # CRITICAL: Position must be 0.0 (beginning) - vehicles can only spawn at the start
+        if abs(position) > 0.1:  # Allow small tolerance for floating point
+            print(f"  ⚠ Warning: Spawn position {position:.2f} is not at beginning (0.0)")
+        
+        # Get spawn point in world coordinates (at position 0)
+        spawn_point = lane.get_position_at_distance(0.0)
+        spawn_x, spawn_y = spawn_point.x, spawn_point.y
+        
+        # Get direction at position 0 for angle calculation
+        lane_dir = lane.get_direction_at_distance(0.0) if lane.centerline_points else lane.direction
+        spawn_angle = np.arctan2(lane_dir[1], lane_dir[0])
+        
+        # Check against all existing vehicles in the same lane
+        existing_vehicles = self.get_vehicles_in_lane(lane_id)
+        
+        # Typical vehicle dimensions
+        vehicle_length = 4.5
+        vehicle_width = 2.0
+        
+        for vehicle in existing_vehicles:
+            # Only check vehicles very close to spawn position (within 50m)
+            if vehicle.position > 50.0:
+                continue  # Too far away, no collision possible
+            
+            # Get vehicle position and angle
+            veh_x, veh_y = vehicle.get_visual_position()
+            veh_angle = vehicle.get_visual_angle()
+            
+            # Check bounding box overlap using the same method as vehicle collision detection
+            center_dist = np.sqrt((spawn_x - veh_x)**2 + (spawn_y - veh_y)**2)
+            
+            # Calculate maximum extent (half-diagonal) of each box
+            max_extent1 = np.sqrt((vehicle_length/2)**2 + (vehicle_width/2)**2)
+            max_extent2 = np.sqrt((vehicle.length/2)**2 + (vehicle.width/2)**2)
+            
+            # Safety margin to prevent bounding box collisions - increased for spawns
+            safety_margin = 5.0  # Large margin to prevent any overlap at spawn
+            
+            # If distance between centers is less than sum of extents + safety margin, overlap detected
+            if center_dist < max_extent1 + max_extent2 + safety_margin:
+                return False  # Overlap detected, position not safe
+        
+        return True  # No overlap, position is safe
+    
+    def _get_spawn_position_for_lane(self, lane_id: int) -> float:
+        """
+        Get the spawn position for a lane.
+        DEPRECATED: Vehicles now always spawn at position 0.0 (beginning).
+        This method is kept for compatibility but always returns 0.0.
+        
+        Args:
+            lane_id: ID of the lane
+            
+        Returns:
+            Always returns 0.0 (spawn point at beginning)
+        """
+        # CRITICAL: Vehicles MUST spawn at position 0.0 (beginning)
+        # Position 0.0 corresponds to the first centerline point where spawn_enabled is true
+        return 0.0
+    
     def _spawn_initial_vehicles(self):
         """Spawn initial vehicles on the road network."""
-        # Only spawn one vehicle initially to avoid clustering
+        # Spawn very few vehicles initially to avoid overlap
+        # Let the spawn timer handle gradual spawning
         if self.max_vehicles > 0:
-            self._spawn_vehicle()
+            # Spawn only 1-2 vehicles initially, well spaced
+            num_initial = min(2, self.max_vehicles)
+            for _ in range(num_initial):
+                if len(self.vehicles) < self.max_vehicles:
+                    self._spawn_vehicle()
+                    # Small delay between initial spawns to ensure spacing
+                    self.spawn_timer = 0.5  # Reset timer so next spawn is delayed
     
     def _spawn_vehicle(self):
         """Spawn a new vehicle with proper spacing."""
         if len(self.vehicles) >= self.max_vehicles:
             return
         
-        # Get all incoming lanes (lanes that lead to the intersection)
-        incoming_lanes = self._get_incoming_lanes()
-        if not incoming_lanes:
-            # Fallback to first lane if no incoming lanes found
-            lane_id = list(self.road_network.all_lanes.keys())[0]
-        else:
-            # Randomly choose an incoming lane
-            lane_id = random.choice(incoming_lanes)
+        # Get spawnable lanes (only lanes 1, 2, 4, 5, 6, 7, 8, 9)
+        spawnable_lanes = self._get_spawnable_lanes()
+        if not spawnable_lanes:
+            # Fallback to all lanes if no spawnable lanes found
+            spawnable_lanes = list(self.road_network.all_lanes.keys())
+        
+        if not spawnable_lanes:
+            return
+        
+        # Randomly choose a spawnable lane
+        lane_id = random.choice(spawnable_lanes)
         
         # Create vehicle
         vehicle_id = self.vehicle_counter
         self.vehicle_counter += 1
         
-        # Random vehicle properties
-        max_speed = random.uniform(30.0, 40.0)  # m/s (increased speeds)
-        max_acceleration = random.uniform(2.0, 3.0)  # m/s² (faster acceleration)
-        max_deceleration = random.uniform(-4.0, -5.0)  # m/s² (stronger braking)
+        # Random vehicle properties - various speeds (some fast, some slower)
+        # Speeds are multiplied by 5 for 5x faster movement
+        # Create more variation: 60% fast, 30% medium, 10% slow
+        speed_roll = random.random()
+        if speed_roll < 0.6:
+            # Fast vehicles (highway speeds) - 5x faster
+            max_speed = random.uniform(25.0, 35.0) * 5.0  # m/s (450-630 km/h equivalent)
+        elif speed_roll < 0.9:
+            # Medium speed vehicles (city speeds) - 5x faster
+            max_speed = random.uniform(15.0, 22.0) * 5.0  # m/s (270-395 km/h equivalent)
+        else:
+            # Slow vehicles (traffic/slow drivers) - 5x faster
+            max_speed = random.uniform(10.0, 15.0) * 5.0  # m/s (180-270 km/h equivalent)
         
-        # Random color
-        color = (
-            random.randint(0, 255),
-            random.randint(0, 255),
-            random.randint(0, 255)
-        )
+        max_acceleration = random.uniform(2.5, 4.0)  # m/s² (varied acceleration)
+        max_deceleration = random.uniform(-4.0, -6.0)  # m/s² (varied braking)
         
-        # Calculate safe starting position to avoid collisions
-        safe_start_position = self._calculate_safe_start_position(lane_id)
+        # Random color - but default to yellow for visibility
+        color = (255, 220, 0)  # Yellow by default (like in the image)
+        # Optionally add slight variation
+        if random.random() < 0.2:  # 20% chance of slight variation
+            color = (
+                min(255, color[0] + random.randint(-20, 20)),
+                min(255, color[1] + random.randint(-20, 20)),
+                min(255, color[2] + random.randint(-20, 20))
+            )
+        
+        # CRITICAL: Vehicles MUST spawn at position 0.0 (beginning of lane)
+        # They can ONLY spawn at the spawn point (first point of centerline)
+        # Position 0.0 corresponds to the first centerline point where spawn_enabled is true
+        spawn_position = 0.0
+        
+        # Verify no bounding box overlap before spawning at position 0.0
+        if not self._check_spawn_position_safe(lane_id, spawn_position):
+            # Position not safe, skip spawning this vehicle
+            print(f"⚠ Skipped spawning vehicle on lane {lane_id} - position {spawn_position:.1f}m not safe (overlap detected)")
+            return
+        
+        # Random initial speed - varied based on max speed
+        # Start at 60-80% of max speed for variety (already 5x faster)
+        initial_speed = random.uniform(max_speed * 0.6, max_speed * 0.8)
         
         vehicle = Vehicle(
             model=self,
             unique_id=vehicle_id,
             lane_id=lane_id,
-            position=safe_start_position,
-            speed=random.uniform(15, 25),  # Higher initial speed to clear space faster
+            position=spawn_position,  # Always spawn at position 0.0 (spawn point)
+            speed=initial_speed,
             max_speed=max_speed,
             max_acceleration=max_acceleration,
             max_deceleration=max_deceleration,
@@ -240,11 +1109,143 @@ class TrafficSimulationModel(mesa.Model):
         # Update statistics
         self.stats['total_vehicles_spawned'] += 1
         
-        print(f"Spawned vehicle {vehicle_id} at position {safe_start_position:.1f}m")
+        # Verify vehicle orientation matches lane direction
+        lane = self.road_network.get_lane(lane_id)
+        if lane:
+            lane_dir = lane.direction
+            # CRITICAL: Use direction at position 0 (beginning) to match spawn position
+            if lane.centerline_points and len(lane.centerline_points) >= 2:
+                # Use direction from first to second centerline point for accurate direction
+                lane_dir = lane.get_direction_at_distance(0.0)
+            
+            vehicle_angle = vehicle.get_visual_angle()
+            lane_angle = np.arctan2(lane_dir[1], lane_dir[0])
+            angle_diff = abs(vehicle_angle - lane_angle)
+            if angle_diff > np.pi:
+                angle_diff = 2 * np.pi - angle_diff
+            
+            # Debug for vertical lanes
+            if lane_id in [6, 7, 8, 9]:
+                print(f"Spawned vehicle {vehicle_id} on lane {lane_id} at position {spawn_position:.1f}m")
+                print(f"  Lane direction: ({lane_dir[0]:.3f}, {lane_dir[1]:.3f}), angle: {np.degrees(lane_angle):.1f}°")
+                print(f"  Vehicle angle: {np.degrees(vehicle_angle):.1f}° (diff: {np.degrees(angle_diff):.2f}°)")
+                if abs(angle_diff) > 0.1:  # More than ~6 degrees difference
+                    print(f"  ⚠ WARNING: Vehicle angle doesn't match lane direction!")
+        else:
+            print(f"Spawned vehicle {vehicle_id} on lane {lane_id} at position {spawn_position:.1f}m")
+    
+    def _calculate_safe_start_position_at(self, lane_id: int, preferred_position: float) -> float:
+        """
+        Calculate a safe starting position for a new vehicle near a preferred position.
+        
+        Args:
+            lane_id: ID of the lane
+            preferred_position: Preferred spawn position (left/right/top beginning)
+            
+        Returns:
+            Safe starting position along the lane
+        """
+        # Get existing vehicles in this lane
+        existing_vehicles = self.get_vehicles_in_lane(lane_id)
+        
+        if not existing_vehicles:
+            # No vehicles in lane, spawn at preferred position
+            return preferred_position
+        
+        # Sort vehicles by position
+        existing_vehicles.sort(key=lambda v: v.position)
+        
+        # Get lane length
+        lane_length = self.get_lane_length(lane_id)
+        
+        # Check if spawning at beginning (position 0) or end (position = lane_length)
+        spawn_at_beginning = preferred_position < lane_length * 0.1
+        
+        if spawn_at_beginning:
+            # Spawn at beginning - check vehicles near start
+            check_distance = min(300.0, lane_length * 0.2)
+            nearby_vehicles = [v for v in existing_vehicles if v.position < check_distance]
+            
+            if not nearby_vehicles:
+                return preferred_position
+            
+            # Find closest vehicle to start
+            closest_vehicle = min(nearby_vehicles, key=lambda v: v.position)
+            
+            # Safe distance - ensure vehicles don't overlap (minimum = vehicle length + safety margin)
+            # For vehicles spawning at beginning, they need space ahead of closest vehicle
+            vehicle_length = 4.5  # Average vehicle length
+            min_safe_distance = vehicle_length + 10.0  # At least vehicle length + 10m safety margin
+            safe_position = closest_vehicle.position - min_safe_distance - vehicle_length
+            
+            # Ensure safe position is at least at spawn position
+            safe_position = max(preferred_position, safe_position)
+            
+            # If safe position is negative, try to find a gap
+            if safe_position < 0:
+                positions_used = [v.position for v in nearby_vehicles]
+                positions_used.sort()
+                
+                # Look for gaps - need at least vehicle length + safety margin
+                vehicle_length = 4.5
+                gap_requirement = vehicle_length + 10.0  # Minimum gap between vehicles
+                for i in range(len(positions_used) - 1):
+                    gap_start = positions_used[i] + gap_requirement
+                    gap_end = positions_used[i + 1] - gap_requirement
+                    if gap_end > gap_start and gap_end > preferred_position:
+                        # Found a gap, use it
+                        return max(preferred_position, gap_start)
+                
+                # No gap found - spawn after the last vehicle with proper spacing
+                max_position = max(positions_used) + vehicle_length + 10.0
+                return min(max_position, check_distance)
+            
+            return max(0, safe_position)
+        else:
+            # Spawn at end - check vehicles near end
+            check_distance = min(300.0, lane_length * 0.2)
+            nearby_vehicles = [v for v in existing_vehicles if v.position > lane_length - check_distance]
+            
+            if not nearby_vehicles:
+                return preferred_position
+            
+            # Find closest vehicle to end
+            closest_vehicle = max(nearby_vehicles, key=lambda v: v.position)
+            
+            # Safe distance - ensure vehicles don't overlap
+            vehicle_length = 4.5  # Average vehicle length
+            min_safe_distance = vehicle_length + 10.0  # At least vehicle length + 10m safety margin
+            safe_position = closest_vehicle.position + min_safe_distance + vehicle_length
+            
+            # Ensure safe position doesn't exceed preferred position (for end spawns)
+            safe_position = min(preferred_position, safe_position)
+            
+            # If safe position exceeds lane length, try to find a gap
+            if safe_position > lane_length:
+                positions_used = [v.position for v in nearby_vehicles]
+                positions_used.sort()
+                
+                # Look for gaps - need at least vehicle length + safety margin
+                vehicle_length = 4.5
+                gap_requirement = vehicle_length + 10.0  # Minimum gap between vehicles
+                for i in range(len(positions_used) - 1):
+                    gap_start = positions_used[i] + gap_requirement
+                    gap_end = positions_used[i + 1] - gap_requirement
+                    if gap_end > gap_start and gap_start < preferred_position:
+                        # Found a gap, use it
+                        return min(preferred_position, gap_end)
+                
+                # No gap found - spawn before the first vehicle with proper spacing
+                vehicle_length = 4.5
+                min_position = min(positions_used) - vehicle_length - 10.0
+                return max(min_position, lane_length - check_distance)
+            
+            return min(lane_length, safe_position)
     
     def _calculate_safe_start_position(self, lane_id: int) -> float:
         """
         Calculate a safe starting position for a new vehicle at the start of the road.
+        Deprecated: Use _calculate_safe_start_position_at instead.
         
         Args:
             lane_id: ID of the lane
@@ -252,40 +1253,7 @@ class TrafficSimulationModel(mesa.Model):
         Returns:
             Safe starting position along the lane (at the start)
         """
-        # Get existing vehicles in this lane
-        existing_vehicles = self.get_vehicles_in_lane(lane_id)
-        
-        if not existing_vehicles:
-            # No vehicles in lane, start at beginning
-            return random.uniform(0, 20)
-        
-        # Sort vehicles by position
-        existing_vehicles.sort(key=lambda v: v.position)
-        
-        # Find vehicles near the start of the road (within first 100m)
-        start_vehicles = [v for v in existing_vehicles if v.position < 100.0]
-        
-        if not start_vehicles:
-            # No vehicles near start, spawn at beginning
-            return random.uniform(0, 20)
-        
-        # Find the vehicle closest to the start
-        closest_vehicle = min(start_vehicles, key=lambda v: v.position)
-        
-        # Calculate safe distance behind the closest vehicle
-        min_safe_distance = 80.0  # meters - increased minimum safe distance
-        safe_position = closest_vehicle.position - min_safe_distance - closest_vehicle.length
-        
-        # Ensure we don't go negative (stay at start of road)
-        safe_position = max(0, safe_position)
-        
-        # Add some randomness to avoid perfect spacing
-        safe_position += random.uniform(0, 10)
-        
-        # Ensure we don't go negative
-        safe_position = max(0, safe_position)
-        
-        return safe_position
+        return self._calculate_safe_start_position_at(lane_id, 0.0)
     
     def remove_vehicle(self, vehicle: Vehicle):
         """
@@ -349,17 +1317,19 @@ class TrafficSimulationModel(mesa.Model):
         """
         return self.road_network.get_lane_position(lane_id)
     
-    def get_lane_direction(self, lane_id: int) -> tuple:
+    def get_lane_direction(self, lane_id: int, distance: Optional[float] = None) -> tuple:
         """
         Get the direction vector of a lane.
+        If distance is provided and lane has centerline, returns direction at that distance.
         
         Args:
             lane_id: ID of the lane
+            distance: Optional distance along lane to get direction at
             
         Returns:
             Tuple of (dx, dy) direction vector
         """
-        return self.road_network.get_lane_direction(lane_id)
+        return self.road_network.get_lane_direction(lane_id, distance)
     
     def update_statistics(self):
         """Update simulation statistics."""

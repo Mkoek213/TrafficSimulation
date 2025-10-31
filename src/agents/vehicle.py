@@ -8,11 +8,15 @@ and can perform lane-changing maneuvers.
 
 import numpy as np
 import mesa
+import random
 from typing import Optional, List, Tuple, TYPE_CHECKING
 from ..utils.krauss_model import KraussModel
+from ..utils.mobil_model import MOBILModel
 
 if TYPE_CHECKING:
     from ..models.traffic_model import TrafficSimulationModel
+else:
+    TrafficSimulationModel = None
 
 
 class Vehicle(mesa.Agent):
@@ -79,9 +83,21 @@ class Vehicle(mesa.Agent):
             max_deceleration=max_deceleration
         )
         
+        # MOBIL lane-changing model
+        self.mobil_model = MOBILModel(
+            politeness_factor=0.5,
+            acceleration_threshold=0.2,
+            safety_criterion=-2.0,
+            right_lane_bias=0.1
+        )
+        
         # State tracking
         self.is_changing_lanes = False
         self.lane_change_progress = 0.0  # 0.0 to 1.0
+        
+        # Route planning
+        self.route_type = random.choice(['straight', 'left', 'right'])  # Desired route at intersection
+        self.route_planned = False  # Whether route has been planned
         
     def get_leader(self) -> Optional['Vehicle']:
         """
@@ -92,6 +108,9 @@ class Vehicle(mesa.Agent):
         """
         lane_vehicles = self.model.get_vehicles_in_lane(self.lane_id)
         
+        if len(lane_vehicles) <= 1:
+            return None
+        
         # Sort vehicles by position
         lane_vehicles.sort(key=lambda v: v.position)
         
@@ -101,9 +120,17 @@ class Vehicle(mesa.Agent):
         except ValueError:
             return None
         
-        # Return the next vehicle (if any)
+        # Return the next vehicle ahead (if any)
         if current_index + 1 < len(lane_vehicles):
-            return lane_vehicles[current_index + 1]
+            leader = lane_vehicles[current_index + 1]
+            # Only return leader if they're actually ahead (considering wrap-around)
+            lane_length = self.model.get_lane_length(self.lane_id)
+            if leader.position > self.position:
+                # Leader is ahead in normal order
+                return leader
+            elif leader.position < self.position - lane_length * 0.5:
+                # Leader wrapped around and is ahead
+                return leader
         
         return None
     
@@ -142,8 +169,15 @@ class Vehicle(mesa.Agent):
         if leader is None:
             return float('inf')
         
-        # Distance is the gap between vehicles plus leader's length
-        distance = leader.position - self.position - leader.length
+        # Distance is the gap between vehicles
+        # Account for vehicle positions along the lane
+        if leader.position > self.position:
+            # Leader is ahead
+            distance = leader.position - self.position - leader.length
+        else:
+            # Leader wrapped around (behind us in position but ahead on lane)
+            lane_length = self.model.get_lane_length(self.lane_id)
+            distance = (lane_length - self.position) + leader.position - leader.length
         
         # Don't subtract safety margin here - it causes false collision detection
         # The safety margin is handled in the Krauss model instead
@@ -151,13 +185,14 @@ class Vehicle(mesa.Agent):
     
     def can_change_lane(self, direction: str) -> bool:
         """
-        Check if the vehicle can safely change lanes in the given direction.
+        Check if the vehicle can safely change lanes in the given direction using MOBIL.
+        Lane changes are ONLY allowed between lanes going in the same direction.
         
         Args:
             direction: 'left' or 'right'
             
         Returns:
-            True if lane change is safe, False otherwise
+            True if lane change is safe and beneficial, False otherwise
         """
         if self.is_changing_lanes:
             return False
@@ -167,18 +202,121 @@ class Vehicle(mesa.Agent):
         if target_lane_id is None:
             return False
         
-        # Check for vehicles in target lane
+        # CRITICAL: Check if lanes go in the same direction
+        # Lane changes should ONLY happen between parallel lanes going the same direction
+        current_lane = self.model.road_network.get_lane(self.lane_id)
+        target_lane = self.model.road_network.get_lane(target_lane_id)
+        
+        if not current_lane or not target_lane:
+            return False
+        
+        # Check if lanes have similar directions (dot product close to 1.0)
+        # This ensures they're parallel and going the same way
+        current_dir = current_lane.direction
+        target_dir = target_lane.direction
+        
+        # Calculate dot product of direction vectors
+        dot_product = current_dir[0] * target_dir[0] + current_dir[1] * target_dir[1]
+        
+        # Require lanes to be nearly parallel (dot product > 0.7 means angle < 45 degrees)
+        if dot_product < 0.7:
+            return False  # Lanes don't go in the same direction - cannot change lanes
+        
+        # Check basic safety: no vehicles too close
         target_lane_vehicles = self.model.get_vehicles_in_lane(target_lane_id)
         
-        # Check if there's enough space in target lane
-        safe_distance = 20.0  # meters
+        # Find leader and follower in target lane
+        target_leader = None
+        target_follower = None
+        min_leader_distance = float('inf')
+        min_follower_distance = float('inf')
         
         for vehicle in target_lane_vehicles:
-            distance = abs(vehicle.position - self.position)
-            if distance < safe_distance:
-                return False
+            distance = vehicle.position - self.position
+            if distance > 0:  # Ahead
+                if distance < min_leader_distance:
+                    min_leader_distance = distance
+                    target_leader = vehicle
+            else:  # Behind
+                if abs(distance) < min_follower_distance:
+                    min_follower_distance = abs(distance)
+                    target_follower = vehicle
         
-        return True
+        # Safety check: need sufficient gap
+        safe_gap_ahead = 30.0  # meters
+        safe_gap_behind = 25.0  # meters
+        
+        if target_leader and min_leader_distance < safe_gap_ahead:
+            return False
+        if target_follower and min_follower_distance < safe_gap_behind:
+            return False
+        
+        # Use MOBIL to evaluate if lane change is beneficial
+        # Estimate accelerations
+        current_accel = self._estimate_acceleration()
+        
+        # Estimate acceleration in target lane
+        new_leader_distance = min_leader_distance if target_leader else float('inf')
+        new_leader_speed = target_leader.speed if target_leader else None
+        new_accel = self.mobil_model.estimate_new_acceleration(
+            self.speed,
+            self.target_speed,
+            new_leader_distance,
+            new_leader_speed
+        )
+        
+        # Estimate impact on follower
+        follower_accel_before = 0.0
+        follower_accel_after = -2.0  # Conservative estimate
+        
+        if target_follower:
+            # Estimate follower's acceleration before and after
+            follower_accel_before = target_follower._estimate_acceleration()
+            # After lane change, follower would be closer to leader
+            follower_accel_after = -1.5  # Would need to brake more
+        
+        # Evaluate using MOBIL
+        should_change, incentive = self.mobil_model.evaluate_lane_change(
+            current_accel,
+            new_accel,
+            follower_accel_after,
+            follower_accel_before,
+            direction
+        )
+        
+        return should_change
+    
+    def _estimate_acceleration(self) -> float:
+        """
+        Estimate current acceleration based on speed and distance to leader.
+        
+        Returns:
+            Estimated acceleration (m/s²)
+        """
+        leader = self.get_leader()
+        if leader is None:
+            # Free flow - accelerate towards max speed
+            if self.speed < self.target_speed:
+                return 2.0  # Max acceleration
+            return 0.0
+        
+        distance_to_leader = self.calculate_distance_to_leader()
+        
+        # Simple estimation
+        if distance_to_leader > 50:
+            # Plenty of space
+            speed_diff = leader.speed - self.speed
+            if speed_diff > 0:
+                return min(2.0, speed_diff * 0.1)
+            return 0.0
+        elif distance_to_leader < 20:
+            # Too close - need to brake
+            return -2.0
+        
+        # Normal following
+        if leader.speed < self.speed:
+            return -1.0
+        return 0.0
     
     def start_lane_change(self, direction: str):
         """
@@ -239,13 +377,6 @@ class Vehicle(mesa.Agent):
         # Calculate distance to leader
         distance_to_leader = self.calculate_distance_to_leader()
         
-        # Check for collision with leader (only if very close)
-        if distance_to_leader < 3.0:  # Stop if within 3 meters (reduced from 10m)
-            print(f"COLLISION DETECTED! Vehicle {self.unique_id} too close to leader")
-            # Emergency stop
-            self.speed = 0
-            return
-        
         # Get leader speed
         leader_speed = None
         leader = self.get_leader()
@@ -253,14 +384,32 @@ class Vehicle(mesa.Agent):
             leader_speed = leader.speed
         
         # Calculate next speed using Krauss model
+        # The Krauss model already handles safe speed calculation
         next_speed = self.krauss_model.calculate_next_speed(
             self.speed,
             distance_to_leader,
             leader_speed
         )
         
-        # Update speed
+        # Only emergency stop if extremely close (less than 0.5m)
+        if distance_to_leader < 0.5:
+            self.speed = 0
+            return
+        
+        # Update speed (Krauss model handles gradual deceleration)
         self.speed = next_speed
+        
+        # Ensure minimum speed to prevent complete stalling
+        # Minimum speeds multiplied by 5 for 5x faster movement
+        if distance_to_leader > 50.0 or leader is None:
+            self.speed = max(self.speed, 20.0 * 5.0)  # Minimum 100 m/s (360 km/h) - 5x faster
+        elif distance_to_leader > 20.0:
+            # Medium distance - maintain at least 75 m/s (270 km/h) - 5x faster
+            self.speed = max(self.speed, 15.0 * 5.0)
+        elif distance_to_leader > 10.0:
+            # Close but not too close - maintain at least 50 m/s (180 km/h) - 5x faster
+            self.speed = max(self.speed, 10.0 * 5.0)
+        # If very close, let Krauss model handle it
         
         # Update position
         next_position = self.krauss_model.calculate_position_update(
@@ -270,24 +419,86 @@ class Vehicle(mesa.Agent):
         )
         
         # Check for collision after position update
-        if self._check_collision_after_move(next_position):
-            print(f"COLLISION AVOIDED! Vehicle {self.unique_id} stopping")
-            self.speed = 0
+        # Be more lenient - only prevent movement if collision is truly imminent
+        # The Krauss model should handle most collision avoidance
+        collision_detected = self._check_collision_after_move(next_position)
+        
+        if collision_detected and self.speed > 0.1:
+            # Collision detected - reduce speed but still allow movement
+            leader = self.get_leader()
+            if leader and leader.speed > 0:
+                # Match leader's speed, but ensure minimum movement
+                # Minimum speeds multiplied by 5 for 5x faster movement
+                min_speed_lane2 = 8.0 * 5.0 if self.lane_id == 2 else 5.0 * 5.0
+                min_speed = min_speed_lane2 if self.lane_id == 2 else 5.0 * 5.0
+                self.speed = max(min_speed, min(self.speed, leader.speed * 0.95))
+            else:
+                # Slow down but don't stop completely
+                # Minimum speeds multiplied by 5 for 5x faster movement
+                min_speed = 10.0 * 5.0 if self.lane_id == 2 else 8.0 * 5.0
+                self.speed = max(min_speed, self.speed * 0.85)
+            
+            # Still update position at reduced speed
+            adjusted_position = self.position + self.speed * dt
+            self.position = min(adjusted_position, next_position)
             return
+        
+        # No collision or speed is very low - proceed normally
         
         # Check if vehicle has reached end of lane
         lane_length = self.model.get_lane_length(self.lane_id)
         if next_position >= lane_length:
             # Vehicle has reached end of lane - try to transition to connected lane
+            current_lane = self.model.road_network.get_lane(self.lane_id)
+            lane_type = current_lane.get_lane_type() if current_lane else 'unknown'
+            
             if not self._try_lane_transition():
-                # No connected lane available, remove vehicle
-                self.model.remove_vehicle(self)
+                # No connected lane available
+                if lane_type == 'access':
+                    # Access lane: stop at end (lane ends without connection)
+                    self.position = lane_length
+                    self.speed = 0
+                    # Remove vehicle if it reaches the end of an access lane
+                    # (Access lanes end without connection, so vehicles should exit)
+                    if self.position >= lane_length - 0.1:  # Very close to end
+                        # Mark vehicle for removal
+                        self.model.remove_vehicle(self)
+                        return  # Exit step early since vehicle is being removed
+                else:
+                    # Unknown/no polygon info: fallback behavior - wrap around
+                    # But first check if there's space at the start to avoid immediate collision
+                    wrap_position = next_position - lane_length
+                    
+                    # Check for collisions at wrap position
+                    lane_vehicles = self.model.get_vehicles_in_lane(self.lane_id)
+                    min_distance = float('inf')
+                    for vehicle in lane_vehicles:
+                        if vehicle == self:
+                            continue
+                        distance = abs(vehicle.position - wrap_position)
+                        min_distance = min(min_distance, distance)
+                    
+                    # Only wrap if there's enough space (at least 20m)
+                    if min_distance > 20.0:
+                        self.position = wrap_position
+                    else:
+                        # Not enough space - stop at end of lane
+                        self.position = lane_length
+                        self.speed = 0
+            else:
+                # Successfully transitioned to connected lane (turning lane)
+                self.position = next_position
         else:
             self.position = next_position
+        
+        # Lane-changing decision (only if not already changing lanes)
+        if not self.is_changing_lanes and random.random() < 0.1:  # Check occasionally
+            self._consider_lane_change()
     
     def _try_lane_transition(self) -> bool:
         """
         Try to transition to a connected lane at the end of current lane.
+        Uses route planning to choose the correct lane based on desired route type.
         
         Returns:
             True if transition successful, False otherwise
@@ -296,9 +507,20 @@ class Vehicle(mesa.Agent):
         if not current_lane or not current_lane.connected_lanes:
             return False
         
-        # Choose first connected lane (straight through for now)
-        # In the future, this could support turns based on routing
-        next_lane_id = current_lane.connected_lanes[0]
+        # Check traffic light if approaching intersection
+        intersection = self.model._get_intersection_for_lane(self.lane_id)
+        if intersection:
+            if not intersection.can_proceed(self.lane_id):
+                # Red light - stop at intersection
+                self.speed = 0
+                self.position = self.model.get_lane_length(self.lane_id)
+                return False
+        
+        # Choose connected lane based on route type
+        next_lane_id = self._choose_next_lane_by_route(current_lane)
+        
+        if next_lane_id is None:
+            return False
         
         # Check if the next lane has space at the beginning
         next_lane_vehicles = self.model.get_vehicles_in_lane(next_lane_id)
@@ -317,12 +539,112 @@ class Vehicle(mesa.Agent):
         old_lane_id = self.lane_id
         self.lane_id = next_lane_id
         self.position = 0.0  # Start at beginning of new lane
-        print(f"Vehicle {self.unique_id} transitioned from lane {old_lane_id} to lane {next_lane_id}")
+        
+        # Update route_type to match the lane we're entering
+        # This ensures vehicles follow the lane's direction (e.g., if lane 3 turns left, vehicle follows left)
+        next_lane = self.model.road_network.get_lane(next_lane_id)
+        if next_lane and current_lane.route_types.get(next_lane_id):
+            # Update route_type to match the route type of the lane we're entering
+            self.route_type = current_lane.route_types.get(next_lane_id, 'straight')
+        
+        print(f"Vehicle {self.unique_id} transitioned from lane {old_lane_id} to lane {next_lane_id} (route: {self.route_type})")
         return True
+    
+    def _choose_next_lane_by_route(self, current_lane) -> Optional[int]:
+        """
+        Choose the next lane based on desired route type.
+        
+        Args:
+            current_lane: Current lane object
+            
+        Returns:
+            Next lane ID or None if not found
+        """
+        if not current_lane.connected_lanes:
+            return None
+        
+        # Find lane matching desired route type
+        for connected_lane_id in current_lane.connected_lanes:
+            route_type = current_lane.route_types.get(connected_lane_id, 'straight')
+            if route_type == self.route_type:
+                return connected_lane_id
+        
+        # If exact match not found, prefer straight, then right, then left
+        for preferred_type in ['straight', 'right', 'left']:
+            for connected_lane_id in current_lane.connected_lanes:
+                route_type = current_lane.route_types.get(connected_lane_id, 'straight')
+                if route_type == preferred_type:
+                    return connected_lane_id
+        
+        # Fallback to first available
+        return current_lane.connected_lanes[0] if current_lane.connected_lanes else None
+    
+    def _consider_lane_change(self):
+        """
+        Consider whether to change lanes using MOBIL model.
+        Also considers if lane change is needed for route planning.
+        """
+        # Don't change lanes if already changing or close to intersection
+        lane_length = self.model.get_lane_length(self.lane_id)
+        distance_to_end = lane_length - self.position
+        
+        # If close to intersection, prioritize getting into correct lane for route
+        if distance_to_end < 100:  # Within 100m of intersection
+            self._lane_change_for_route()
+            return
+        
+        # Otherwise, consider lane change for speed/flow
+        # Check left lane
+        if self.can_change_lane('left'):
+            self.start_lane_change('left')
+            return
+        
+        # Check right lane
+        if self.can_change_lane('right'):
+            self.start_lane_change('right')
+            return
+    
+    def _lane_change_for_route(self):
+        """
+        Change lanes if needed to get into correct lane for desired route.
+        """
+        current_lane = self.model.road_network.get_lane(self.lane_id)
+        if not current_lane:
+            return
+        
+        # Check if current lane supports desired route
+        route_supported = False
+        for connected_lane_id in current_lane.connected_lanes:
+            route_type = current_lane.route_types.get(connected_lane_id, 'straight')
+            if route_type == self.route_type:
+                route_supported = True
+                break
+        
+        if route_supported:
+            return  # Already in correct lane
+        
+        # Try to change to adjacent lane that supports route
+        for direction in ['left', 'right']:
+            target_lane_id = self.model.get_adjacent_lane(self.lane_id, direction)
+            if target_lane_id is None:
+                continue
+            
+            target_lane = self.model.road_network.get_lane(target_lane_id)
+            if not target_lane:
+                continue
+            
+            # Check if target lane supports desired route
+            for connected_lane_id in target_lane.connected_lanes:
+                route_type = target_lane.route_types.get(connected_lane_id, 'straight')
+                if route_type == self.route_type:
+                    # This lane supports our route - try to change
+                    if self.can_change_lane(direction):
+                        self.start_lane_change(direction)
+                        return
     
     def _check_collision_after_move(self, new_position: float) -> bool:
         """
-        Check if moving to new_position would cause a collision.
+        Check if moving to new_position would cause a bounding box collision.
         
         Args:
             new_position: Proposed new position
@@ -333,44 +655,162 @@ class Vehicle(mesa.Agent):
         # Get all vehicles in the same lane
         lane_vehicles = self.model.get_vehicles_in_lane(self.lane_id)
         
+        # Calculate our new world position and angle
+        lane = self.model.road_network.get_lane(self.lane_id)
+        if not lane:
+            return False
+        
+        # CRITICAL: ALWAYS use lane centerline position - vehicles cannot deviate
+        # This ensures collision checks use the exact same position calculation as rendering
+        new_point = lane.get_position_at_distance(new_position)
+        new_world_x, new_world_y = new_point.x, new_point.y
+        
+        # Angle is always based on lane direction
+        new_angle = self.get_visual_angle()
+        
         for vehicle in lane_vehicles:
             if vehicle == self:
                 continue
             
-            # Calculate distance to this vehicle
+            # Quick distance check first (much faster)
+            lane_length = self.model.get_lane_length(self.lane_id)
             distance = abs(vehicle.position - new_position)
             
-            # Check if too close (considering vehicle lengths)
-            min_distance = (self.length + vehicle.length) / 2 + 5.0  # 5m safety margin (reduced from 15m)
+            # If distance is large, might be wrap-around - check actual gap
+            if distance > lane_length * 0.5:
+                if new_position > vehicle.position:
+                    distance = new_position - vehicle.position
+                else:
+                    distance = (lane_length - vehicle.position) + new_position
             
-            if distance < min_distance:
+            # Quick rejection: if too far along lane, no collision possible
+            # Increased safety margin to prevent overlap
+            min_distance_along_lane = (self.length + vehicle.length) / 2 + 5.0  # 5m safety margin
+            if distance > min_distance_along_lane:
+                continue  # Too far, no collision possible
+            
+            # Check bounding box collision for nearby vehicles
+            other_world_x, other_world_y = vehicle.get_visual_position()
+            other_angle = vehicle.get_visual_angle()
+            
+            # Check if bounding boxes overlap using simplified method
+            if self._bounding_boxes_overlap(
+                new_world_x, new_world_y, self.length, self.width, new_angle,
+                other_world_x, other_world_y, vehicle.length, vehicle.width, other_angle
+            ):
                 return True
+        
+        return False
+    
+    def _bounding_boxes_overlap(
+        self,
+        x1: float, y1: float, l1: float, w1: float, a1: float,
+        x2: float, y2: float, l2: float, w2: float, a2: float
+    ) -> bool:
+        """
+        Check if two rotated bounding boxes overlap using simplified distance check.
+        
+        Args:
+            x1, y1: Center of first box
+            l1, w1: Length and width of first box
+            a1: Angle of first box
+            x2, y2: Center of second box
+            l2, w2: Length and width of second box
+            a2: Angle of second box
+            
+        Returns:
+            True if boxes overlap, False otherwise
+        """
+        # Calculate distance between centers
+        center_dist = np.sqrt((x1 - x2)**2 + (y1 - y2)**2)
+        
+        # Calculate maximum extent (half-diagonal) of each box
+        max_extent1 = np.sqrt((l1/2)**2 + (w1/2)**2)
+        max_extent2 = np.sqrt((l2/2)**2 + (w2/2)**2)
+        
+        # Safety margin to prevent bounding box collisions - increased to prevent overlap
+        safety_margin = 2.5  # meters - larger margin to ensure no overlap
+        
+        # If distance between centers is less than sum of extents + safety margin, collision
+        if center_dist < max_extent1 + max_extent2 + safety_margin:
+            return True
         
         return False
     
     def get_visual_position(self) -> Tuple[float, float]:
         """
         Get the visual position for rendering.
+        CRITICAL: ALWAYS returns position on lane centerline - vehicles CANNOT deviate from centerline
+        except during lane changes, where they interpolate between centerlines.
+        
+        Vehicles can ONLY create x, y coordinates:
+        1. On their current lane's centerline
+        2. Between centerlines when changing lanes (interpolated)
+        
+        There is NO other way for vehicles to position themselves.
         
         Returns:
-            Tuple of (x, y) coordinates for visualization
+            Tuple of (x, y) coordinates for visualization (ALWAYS on centerline or between centerlines)
         """
         # Get the lane and use its method to calculate position
         lane = self.model.road_network.get_lane(self.lane_id)
         if not lane:
             return (0.0, 0.0)
         
-        # Use the lane's built-in method for accurate position calculation
-        point = lane.get_position_at_distance(self.position)
+        # If changing lanes, interpolate between current and target lane centerlines
+        # This is the ONLY way vehicles can be between lanes
+        if self.is_changing_lanes and self.desired_lane_change:
+            target_lane_id = self.model.get_adjacent_lane(self.lane_id, self.desired_lane_change)
+            if target_lane_id is not None:
+                target_lane = self.model.road_network.get_lane(target_lane_id)
+                if target_lane:
+                    # Get position on current lane centerline (ALWAYS on centerline)
+                    current_point = lane.get_position_at_distance(self.position)
+                    # Get position on target lane centerline (at same distance along lane)
+                    target_point = target_lane.get_position_at_distance(self.position)
+                    
+                    # Interpolate between centerlines based on lane change progress
+                    # This creates a smooth transition between two centerlines
+                    interp_x = current_point.x + (target_point.x - current_point.x) * self.lane_change_progress
+                    interp_y = current_point.y + (target_point.y - current_point.y) * self.lane_change_progress
+                    
+                    return (interp_x, interp_y)
         
+        # Normal case: ALWAYS on lane centerline - no deviation possible
+        point = lane.get_position_at_distance(self.position)
         return point.x, point.y
     
     def get_visual_angle(self) -> float:
         """
         Get the visual angle for rendering.
+        Angle is always based on the lane direction - vehicles follow lane direction.
+        During lane changes, interpolate between current and target lane angles.
         
         Returns:
             Angle in radians
         """
-        lane_direction = self.model.get_lane_direction(self.lane_id)
+        # If changing lanes, interpolate between current and target lane angles
+        if self.is_changing_lanes and self.desired_lane_change:
+            target_lane_id = self.model.get_adjacent_lane(self.lane_id, self.desired_lane_change)
+            if target_lane_id is not None:
+                # Get direction at current position for both lanes
+                current_lane_dir = self.model.get_lane_direction(self.lane_id, self.position)
+                target_lane_dir = self.model.get_lane_direction(target_lane_id, self.position)
+                
+                current_angle = np.arctan2(current_lane_dir[1], current_lane_dir[0])
+                target_angle = np.arctan2(target_lane_dir[1], target_lane_dir[0])
+                
+                # Interpolate angle (handle wrap-around)
+                angle_diff = target_angle - current_angle
+                if angle_diff > np.pi:
+                    angle_diff -= 2 * np.pi
+                elif angle_diff < -np.pi:
+                    angle_diff += 2 * np.pi
+                
+                return current_angle + angle_diff * self.lane_change_progress
+        
+        # Normal case: use current lane direction at current position
+        # CRITICAL: Use direction at actual position, not overall lane direction
+        # This ensures vehicles follow centerlines exactly, especially for vertical lanes
+        lane_direction = self.model.get_lane_direction(self.lane_id, self.position)
         return np.arctan2(lane_direction[1], lane_direction[0])

@@ -58,16 +58,21 @@ class TrafficVisualization:
         
         # Colors
         self.colors = {
-            'background': (30, 30, 30),  # Darker background
-            'road': (120, 120, 120),      # Much lighter gray for roads
-            'lane_marker': (255, 255, 255),
-            'vehicle': (255, 0, 0),
-            'text': (255, 255, 255),
-            'stats_bg': (0, 0, 0, 128)
+            'background': (240, 240, 240),  # Light grey background
+            'road': (60, 60, 60),          # Dark grey/black roads
+            'shoulder': (200, 200, 200),   # Light grey shoulders
+            'lane_marker': (255, 255, 255), # White lane markers
+            'center_line': (255, 165, 0),   # Orange center line (double)
+            'crosswalk': (180, 100, 100),   # Dark red crosswalk
+            'crosswalk_white': (255, 255, 255), # White crosswalk stripes
+            'vehicle': (255, 220, 0),       # Yellow vehicles
+            'vehicle_detail': (100, 150, 255), # Blue detail (like sensor)
+            'text': (0, 0, 0),
+            'stats_bg': (255, 255, 255, 230)
         }
         
         # View settings
-        self.zoom = 0.5  # Start with a better zoom level
+        self.zoom = 1.0  # Start with better zoom to see lanes and vehicles clearly
         self.pan_x = 0.0
         self.pan_y = 0.0
         
@@ -215,7 +220,7 @@ class TrafficVisualization:
     
     def draw_road(self, lane: Lane):
         """
-        Draw a single lane/road segment.
+        Draw a single lane/road segment with proper styling.
         
         Args:
             lane: Lane to draw
@@ -224,24 +229,49 @@ class TrafficVisualization:
         start_x, start_y = self.world_to_screen(lane.start_point.x, lane.start_point.y)
         end_x, end_y = self.world_to_screen(lane.end_point.x, lane.end_point.y)
         
-        # Draw road (MUCH thicker line for laptop visibility)
-        # road_width = int(lane.lane_width * self.zoom * 20)  # Make roads MUCH wider
-        # if road_width < 20:
-        #     road_width = 20
-        road_width = int(lane.lane_width * self.zoom)
+        # Calculate road width - MUCH WIDER for visibility
+        # Base width is much larger, scaled by zoom
+        base_width = 15.0  # Base width in pixels (much larger)
+        road_width = max(12, int(base_width * self.zoom))  # Ensure minimum visibility
         
-
-        pygame.draw.line(self.screen, self.colors['road'], 
-                        (start_x, start_y), (end_x, end_y), road_width)
+        # Calculate perpendicular direction for drawing shoulders and center lines
+        dx = end_x - start_x
+        dy = end_y - start_y
+        length = math.sqrt(dx*dx + dy*dy)
         
-        # Draw lane markers (center line)
-        if road_width > 40:
-            pygame.draw.line(self.screen, self.colors['lane_marker'], 
-                           (start_x, start_y), (end_x, end_y), 8)
+        if length > 0:
+            perp_x = -dy / length
+            perp_y = dx / length
+            
+            # Draw shoulder (light grey strip) - wider than road
+            shoulder_width = road_width + max(6, int(base_width * self.zoom * 0.4))
+            shoulder_start = (int(start_x + perp_x * shoulder_width/2),
+                            int(start_y + perp_y * shoulder_width/2))
+            shoulder_end = (int(start_x - perp_x * shoulder_width/2),
+                          int(start_y - perp_y * shoulder_width/2))
+            pygame.draw.line(self.screen, self.colors['shoulder'], 
+                           shoulder_start, shoulder_end, shoulder_width)
+            
+            # Draw main road (dark grey) - MUCH WIDER
+            road_start = (int(start_x + perp_x * road_width/2),
+                         int(start_y + perp_y * road_width/2))
+            road_end = (int(start_x - perp_x * road_width/2),
+                       int(start_y - perp_y * road_width/2))
+            pygame.draw.line(self.screen, self.colors['road'], 
+                           road_start, road_end, road_width)
+            
+            # Draw center line (white lane marker) - thicker for visibility
+            if road_width > 6:
+                marker_width = max(2, int(road_width * 0.15))  # Thicker markers
+                pygame.draw.line(self.screen, self.colors['lane_marker'], 
+                               (start_x, start_y), (end_x, end_y), marker_width)
+            
+            # Draw directional arrows periodically
+            self._draw_directional_arrows(start_x, start_y, end_x, end_y, dx, dy, length, road_width)
     
     def draw_vehicle(self, vehicle: Vehicle):
         """
-        Draw a vehicle with a car-like shape.
+        Draw a vehicle as a yellow rectangle with blue detail (like in the image).
         
         Args:
             vehicle: Vehicle to draw
@@ -253,31 +283,53 @@ class TrafficVisualization:
         # Get vehicle angle
         angle = vehicle.get_visual_angle()
         
-        # Vehicle dimensions (scaled by zoom)
-        # length = int(vehicle.length * self.zoom * 8)  # Make cars MUCH bigger
-        # width = int(vehicle.width * self.zoom * 8)    # Make cars MUCH bigger
-        length = int(vehicle.length * self.zoom)  # Make cars MUCH bigger
-        width = int(vehicle.width * self.zoom)    # Make cars MUCH bigger
+        # Vehicle dimensions - MUCH LARGER for visibility
+        # Scale vehicles to be clearly visible
+        base_length = 25.0  # Base vehicle length in pixels
+        base_width = 15.0   # Base vehicle width in pixels
+        length = max(20, int(base_length * self.zoom))  # Make cars much bigger
+        width = max(12, int(base_width * self.zoom))   # Make cars much bigger
         
-        # Ensure minimum size
-        # length = max(32, length)
-        # width = max(16, width)
+        # Draw vehicle as yellow rectangle (like in the image)
+        self._draw_vehicle_shape(screen_x, screen_y, length, width, angle)
+    
+    def _draw_vehicle_shape(self, x: int, y: int, length: int, width: int, angle: float):
+        """
+        Draw a vehicle as a yellow rectangle with blue detail.
         
-        # Try to use car sprite, fallback to drawn shape
-        color_name = self._get_car_color_name(vehicle.color)
-        if color_name in self.car_sprites:
-            self._draw_car_sprite(screen_x, screen_y, length, width, angle, color_name)
-        else:
-            self._draw_car_shape(screen_x, screen_y, length, width, angle, vehicle.color)
+        Args:
+            x, y: Center position
+            length: Car length
+            width: Car width
+            angle: Rotation angle in radians
+        """
+        # Create vehicle surface
+        car_surface = pygame.Surface((length + 4, width + 4), pygame.SRCALPHA)
         
-        # Draw speed indicator (small line showing speed)
-        if self.zoom > 1.0:  # Only show when zoomed in
-            speed_line_length = int(vehicle.speed * self.zoom * 0.5)
-            if speed_line_length > 0:
-                end_x = screen_x + int(speed_line_length * math.cos(angle))
-                end_y = screen_y + int(speed_line_length * math.sin(angle))
-                pygame.draw.line(self.screen, (255, 255, 0), 
-                               (screen_x, screen_y), (end_x, end_y), 2)
+        # Draw main yellow body (rectangle)
+        body_rect = pygame.Rect(2, 2, length, width)
+        pygame.draw.rect(car_surface, self.colors['vehicle'], body_rect)
+        
+        # Draw blue detail rectangle on front (like sensor/identifier)
+        detail_width = max(3, int(width * 0.4))
+        detail_length = max(4, int(length * 0.15))
+        detail_rect = pygame.Rect(length - detail_length - 1, 
+                                 (width - detail_width) // 2 + 2, 
+                                 detail_length, detail_width)
+        pygame.draw.rect(car_surface, self.colors['vehicle_detail'], detail_rect)
+        
+        # Draw border for better visibility
+        pygame.draw.rect(car_surface, (200, 180, 0), body_rect, 1)
+        
+        # Rotate the vehicle surface
+        rotated_surface = pygame.transform.rotate(car_surface, math.degrees(angle))
+        
+        # Get the rotated rect and center it
+        rotated_rect = rotated_surface.get_rect()
+        rotated_rect.center = (x, y)
+        
+        # Draw the rotated vehicle
+        self.screen.blit(rotated_surface, rotated_rect)
     
     def _draw_car_shape(self, x: int, y: int, length: int, width: int, angle: float, color: Tuple[int, int, int]):
         """
@@ -382,15 +434,15 @@ class TrafficVisualization:
             f"Zoom: {self.zoom:.2f}x"
         ]
         
-        # Draw statistics background
+        # Draw statistics background (white with border)
         stats_height = len(stats_text) * 25 + 10
         stats_rect = pygame.Rect(10, 10, 250, stats_height)
-        pygame.draw.rect(self.screen, self.colors['stats_bg'], stats_rect)
-        pygame.draw.rect(self.screen, (255, 255, 255), stats_rect, 2)
+        pygame.draw.rect(self.screen, (255, 255, 255), stats_rect)
+        pygame.draw.rect(self.screen, (0, 0, 0), stats_rect, 2)
         
-        # Draw statistics text
+        # Draw statistics text (black text on white background)
         for i, text in enumerate(stats_text):
-            text_surface = self.font.render(text, True, self.colors['text'])
+            text_surface = self.font.render(text, True, (0, 0, 0))
             self.screen.blit(text_surface, (20, 20 + i * 25))
         
         # Draw controls
@@ -405,18 +457,173 @@ class TrafficVisualization:
         
         controls_height = len(controls_text) * 20 + 10
         controls_rect = pygame.Rect(10, self.height - controls_height - 10, 200, controls_height)
-        pygame.draw.rect(self.screen, self.colors['stats_bg'], controls_rect)
-        pygame.draw.rect(self.screen, (255, 255, 255), controls_rect, 2)
+        pygame.draw.rect(self.screen, (255, 255, 255), controls_rect)
+        pygame.draw.rect(self.screen, (0, 0, 0), controls_rect, 2)
         
         for i, text in enumerate(controls_text):
-            text_surface = self.small_font.render(text, True, self.colors['text'])
+            text_surface = self.small_font.render(text, True, (0, 0, 0))
             self.screen.blit(text_surface, (20, self.height - controls_height + i * 20))
     
     def draw_road_network(self):
         """Draw the entire road network."""
-        # Draw all lanes
+        # Draw all lanes (roads first)
         for lane_id, lane in self.model.road_network.all_lanes.items():
             self.draw_road(lane)
+        
+        # Draw crosswalks at intersections
+        self.draw_crosswalks()
+        
+        # Draw traffic lights
+        self.draw_traffic_lights()
+    
+    def draw_crosswalks(self):
+        """Draw crosswalk patterns at intersections."""
+        for intersection in self.model.road_network.intersections:
+            center_x, center_y = self.world_to_screen(
+                intersection.center_point.x, 
+                intersection.center_point.y
+            )
+            
+            # Draw crosswalk pattern (alternating stripes)
+            crosswalk_size = max(30, int(50 * self.zoom))
+            stripe_width = max(3, int(5 * self.zoom))
+            num_stripes = 8
+            
+            # Draw crosswalk for each approach
+            for lane_id in intersection.connected_lanes:
+                lane = self.model.road_network.get_lane(lane_id)
+                if not lane:
+                    continue
+                
+                # Draw crosswalk perpendicular to lane direction
+                dx = lane.end_point.x - lane.start_point.x
+                dy = lane.end_point.y - lane.start_point.y
+                length = math.sqrt(dx*dx + dy*dy)
+                
+                if length == 0:
+                    continue
+                
+                # Perpendicular direction
+                perp_x = -dy / length
+                perp_y = dx / length
+                
+                # Draw alternating stripes
+                for i in range(num_stripes):
+                    stripe_offset = (i - num_stripes/2) * stripe_width * 2
+                    
+                    if i % 2 == 0:
+                        # White stripe
+                        stripe_color = self.colors['crosswalk_white']
+                    else:
+                        # Dark red stripe
+                        stripe_color = self.colors['crosswalk']
+                    
+                    stripe_start = (int(center_x + perp_x * (crosswalk_size/2 + stripe_offset)),
+                                   int(center_y + perp_y * (crosswalk_size/2 + stripe_offset)))
+                    stripe_end = (int(center_x + perp_x * (crosswalk_size/2 + stripe_offset + stripe_width)),
+                                 int(center_y + perp_y * (crosswalk_size/2 + stripe_offset + stripe_width)))
+                    
+                    pygame.draw.line(self.screen, stripe_color, stripe_start, stripe_end, stripe_width)
+    
+    def _draw_directional_arrows(self, start_x, start_y, end_x, end_y, dx, dy, length, road_width):
+        """
+        Draw white directional arrows on the road.
+        
+        Args:
+            start_x, start_y: Start position
+            end_x, end_y: End position
+            dx, dy: Direction vector
+            length: Length of road segment
+            road_width: Width of road
+        """
+        if length == 0:
+            return
+        
+        # Only draw arrows if road is wide enough
+        if road_width < 10:
+            return
+        
+        # Draw arrows at regular intervals
+        arrow_spacing = 100 * self.zoom  # Spacing between arrows
+        num_arrows = int(length / arrow_spacing)
+        
+        if num_arrows < 1:
+            return
+        
+        # Direction vector (normalized)
+        dir_x = dx / length
+        dir_y = dy / length
+        
+        # Perpendicular vector for arrow position
+        perp_x = -dir_y
+        perp_y = dir_x
+        
+        arrow_size = max(4, int(road_width * 0.3))
+        
+        for i in range(1, num_arrows + 1):
+            t = i / (num_arrows + 1)
+            arrow_x = start_x + t * dx
+            arrow_y = start_y + t * dy
+            
+            # Draw simple arrow (triangle pointing forward)
+            arrow_points = [
+                (int(arrow_x + dir_x * arrow_size), int(arrow_y + dir_y * arrow_size)),  # Tip
+                (int(arrow_x - dir_x * arrow_size/2 + perp_x * arrow_size/2), 
+                 int(arrow_y - dir_y * arrow_size/2 + perp_y * arrow_size/2)),  # Left
+                (int(arrow_x - dir_x * arrow_size/2 - perp_x * arrow_size/2), 
+                 int(arrow_y - dir_y * arrow_size/2 - perp_y * arrow_size/2)),  # Right
+            ]
+            
+            pygame.draw.polygon(self.screen, self.colors['lane_marker'], arrow_points)
+    
+    def draw_traffic_lights(self):
+        """Draw traffic lights at intersections."""
+        for intersection in self.model.road_network.intersections:
+            for lane_id, light_state in intersection.traffic_lights.items():
+                lane = self.model.road_network.get_lane(lane_id)
+                if not lane:
+                    continue
+                
+                # Draw traffic light at the end of incoming lane (near intersection)
+                light_position = lane.end_point
+                screen_x, screen_y = self.world_to_screen(light_position.x, light_position.y)
+                
+                # Draw traffic light circle (smaller and more proportional)
+                light_size = max(4, int(6 * self.zoom))  # Much smaller
+                light_size = min(light_size, 12)  # Cap maximum size
+                
+                # Color based on state
+                if light_state == 'green':
+                    color = (0, 255, 0)
+                elif light_state == 'yellow':
+                    color = (255, 255, 0)
+                else:  # red
+                    color = (255, 0, 0)
+                
+                # Draw stop line (red line across road) when red
+                if light_state == 'red':
+                    # Draw perpendicular line across road
+                    dx = lane.end_point.x - lane.start_point.x
+                    dy = lane.end_point.y - lane.start_point.y
+                    length = math.sqrt(dx*dx + dy*dy)
+                    if length > 0:
+                        perp_x = -dy / length
+                        perp_y = dx / length
+                        
+                        # Use consistent road width calculation
+                        base_width = 15.0
+                        road_width = max(12, int(base_width * self.zoom))
+                        stop_line_length = road_width + max(4, int(base_width * self.zoom * 0.4))
+                        
+                        stop_start = (int(screen_x + perp_x * stop_line_length/2),
+                                     int(screen_y + perp_y * stop_line_length/2))
+                        stop_end = (int(screen_x - perp_x * stop_line_length/2),
+                                   int(screen_y - perp_y * stop_line_length/2))
+                        pygame.draw.line(self.screen, color, stop_start, stop_end, 2)  # Thinner line
+                
+                # Draw traffic light circle
+                pygame.draw.circle(self.screen, color, (screen_x, screen_y), light_size)
+                pygame.draw.circle(self.screen, (255, 255, 255), (screen_x, screen_y), light_size, 2)
     
     def handle_events(self):
         """Handle PyGame events."""

@@ -143,7 +143,7 @@ class TrafficVisualizer:
     def create_video(self, output_path: Optional[str] = None,
                     start_frame: Optional[int] = None,
                     end_frame: Optional[int] = None,
-                    fps: int = 30,
+                    fps: int = 8,
                     show_trails: bool = True,
                     frame_skip: int = 1):
         """
@@ -200,13 +200,14 @@ class TrafficVisualizer:
         out.release()
         print(f"\n✅ Video saved: {output_path}")
     
-    def show_frame_interactive(self, frame_num: int, show_trails: bool = True):
+    def show_frame_interactive(self, frame_num: int, show_trails: bool = True, save_path: str = None):
         """
         Display a single frame interactively using matplotlib.
         
         Args:
             frame_num: Frame number to display
             show_trails: Whether to show trajectory trails
+            save_path: Optional path to save the frame instead of displaying
         """
         img = self.draw_frame_opencv(frame_num, show_trails=show_trails)
         
@@ -215,7 +216,19 @@ class TrafficVisualizer:
         plt.axis('off')
         plt.title(f'Frame {frame_num}', fontsize=14, fontweight='bold')
         plt.tight_layout()
-        plt.show()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=150, bbox_inches='tight')
+            print(f"✅ Frame saved to: {save_path}")
+        else:
+            try:
+                plt.show()
+            except Exception as e:
+                # If interactive display fails, save to a default location
+                default_path = f"frame_{frame_num}.png"
+                plt.savefig(default_path, dpi=150, bbox_inches='tight')
+                print(f"⚠️  Could not display interactively. Frame saved to: {default_path}")
+                print(f"   Error: {e}")
     
     def get_statistics(self) -> dict:
         """Get statistics about the trajectory data."""
@@ -275,10 +288,11 @@ Examples:
     parser.add_argument('--output', help='Output video path (auto-generated if not provided)')
     parser.add_argument('--start-frame', type=int, help='Starting frame (default: first frame)')
     parser.add_argument('--end-frame', type=int, help='Ending frame (default: last frame)')
-    parser.add_argument('--fps', type=int, default=30, help='Output FPS (default: 30)')
+    parser.add_argument('--fps', type=int, default=8, help='Output FPS (default: 8)')
     parser.add_argument('--no-trails', action='store_true', help='Disable trajectory trails')
     parser.add_argument('--frame-skip', type=int, default=1, help='Skip every N frames (default: 1)')
     parser.add_argument('--show-only', action='store_true', help='Show single frame instead of video')
+    parser.add_argument('--save-frame', help='Save frame to file instead of displaying (use with --show-only)')
     
     args = parser.parse_args()
     
@@ -289,7 +303,8 @@ Examples:
     if args.show_only:
         # Show single frame
         frame_num = args.start_frame or int(viz.df['frame'].min())
-        viz.show_frame_interactive(frame_num, show_trails=not args.no_trails)
+        save_path = args.save_frame or f"frame_{frame_num}.png"
+        viz.show_frame_interactive(frame_num, show_trails=not args.no_trails, save_path=save_path)
     else:
         # Create video
         viz.create_video(
