@@ -13,7 +13,7 @@ from ..models.road_network import Intersection
 import random
 
 from ..agents.vehicle import Vehicle
-from ..models.road_network import RoadNetwork, Point
+from ..models.road_network import RoadNetwork, Point, Lane, Road
 from ..utils.krauss_model import KraussModel
 
 
@@ -484,152 +484,48 @@ class TrafficSimulationModel(mesa.Model):
         
         print(f"Creating custom road network from {len(lanes_list)} marked lanes...")
         
+        # First, create all regular lanes
         for lane_info in lanes_list:
             lane_id = lane_info['lane_id']
-            points = lane_info['points']
+            
+            # Use centerline_points if available, otherwise use points
+            if 'centerline_points' in lane_info and len(lane_info['centerline_points']) > 0:
+                points = lane_info['centerline_points']
+            else:
+                points = lane_info.get('points', [])
             
             if len(points) < 2:
                 print(f"⚠ Skipping lane {lane_id}: needs at least 2 points")
                 continue
             
             # Convert points to world coordinates
-            world_points = []
+            centerline_world_points = []
             for px, py in points:
-                world_points.append(image_to_world(px, py))
+                centerline_world_points.append(image_to_world(px, py))
             
-            # Determine start and end points based on spawn location
-            # For lanes that loop back, find the actual start/end points
-            if lane_id in [1, 2]:
-                # Lanes 1, 2: spawn at left beginning (leftmost point)
-                # Find the point with minimum x coordinate (leftmost point)
-                min_x_idx = 0
-                min_x = points[0][0]
-                max_x_idx = 0
-                max_x = points[0][0]
-                for i, (px, py) in enumerate(points):
-                    if px < min_x:
-                        min_x = px
-                        min_x_idx = i
-                    if px > max_x:
-                        max_x = px
-                        max_x_idx = i
-                
-                # Use leftmost point as start, rightmost as end
-                start_point = world_points[min_x_idx]
-                end_point = world_points[max_x_idx]
-            elif lane_id in [4, 5]:
-                # Lanes 4, 5: spawn at right beginning (rightmost point)
-                # Find the point with maximum x coordinate (rightmost point)
-                min_x_idx = 0
-                min_x = points[0][0]
-                max_x_idx = 0
-                max_x = points[0][0]
-                for i, (px, py) in enumerate(points):
-                    if px < min_x:
-                        min_x = px
-                        min_x_idx = i
-                    if px > max_x:
-                        max_x = px
-                        max_x_idx = i
-                
-                # Use rightmost point as start, leftmost as end
-                start_point = world_points[max_x_idx]
-                end_point = world_points[min_x_idx]
-            elif lane_id in [6, 7, 8, 9]:
-                # Lanes 6, 7, 8, 9: spawn at top beginning (topmost point)
-                # Find the point with minimum y coordinate (topmost point in image)
-                min_y_idx = 0
-                min_y = points[0][1]
-                max_y_idx = 0
-                max_y = points[0][1]
-                for i, (px, py) in enumerate(points):
-                    if py < min_y:
-                        min_y = py
-                        min_y_idx = i
-                    if py > max_y:
-                        max_y = py
-                        max_y_idx = i
-                
-                # Use topmost point as start, bottommost as end
-                start_point = world_points[min_y_idx]
-                end_point = world_points[max_y_idx]
-            else:
-                # Other lanes: use first to last
-                start_point = world_points[0]
-                end_point = world_points[-1]
+            # Determine start and end points (first and last centerline points)
+            start_point = centerline_world_points[0]
+            end_point = centerline_world_points[-1]
             
-            # Check if lane is too short (less than 10 meters)
-            lane_length_temp = start_point.distance_to(end_point)
-            if lane_length_temp < 10.0:
-                print(f"⚠ Skipping lane {lane_id}: too short ({lane_length_temp:.1f}m)")
-                continue
-            
-            # Create a road for this lane
-            road = Road(road_id, f"Custom_Lane_{lane_id}")
-            
-            # Create lane with polygon points to detect missing edge
-            # Use points array directly as centerline - vehicles will follow these points exactly
-            centerline_points = None
-            
-            # Check if explicit centerline_points are provided (from mark_centerlines.py)
-            if 'centerline_points' in lane_info and len(lane_info['centerline_points']) > 0:
-                centerline_img_points = lane_info['centerline_points']
-                centerline_world_points = []
-                for px, py in centerline_img_points:
-                    centerline_world_points.append(image_to_world(px, py))
-                
-                # For vertical lanes (6, 7, 8, 9), sort centerline points top to bottom
-                if lane_id in [6, 7, 8, 9]:
-                    centerline_world_points.sort(key=lambda p: -p.y)  # Sort by decreasing y (top to bottom)
-                
-                centerline_points = centerline_world_points
-                print(f"  ✓ Loading {len(centerline_points)} centerline points for lane {lane_id}")
-            else:
-                # No explicit centerline_points - use the points array directly as centerline
-                # These are the points the user drew using mark_lanes.py
-                # Use them in the order they were drawn - this preserves the actual path
-                centerline_points = world_points.copy()
-                
-                # For vertical lanes (6, 7, 8, 9), we need to ensure they go top to bottom
-                # But only if the points aren't already in the correct order
-                if lane_id in [6, 7, 8, 9]:
-                    # Check if points are already ordered top to bottom (by checking first and last y)
-                    if len(centerline_points) >= 2:
-                        first_y = centerline_points[0].y
-                        last_y = centerline_points[-1].y
-                        # In world coordinates, larger y = top (since image y is flipped)
-                        # So if first_y > last_y, it's already top to bottom
-                        if first_y < last_y:
-                            # Points are bottom to top, reverse them
-                            centerline_points.reverse()
-                            print(f"  ✓ Reversed {len(centerline_points)} points for vertical lane {lane_id} (now top to bottom)")
-                        else:
-                            print(f"  ✓ Using {len(centerline_points)} polygon points as centerline for vertical lane {lane_id} (already top to bottom)")
-                    else:
-                        print(f"  ✓ Using {len(centerline_points)} polygon points as centerline for vertical lane {lane_id}")
-                else:
-                    # For horizontal lanes, keep original order
-                    print(f"  ✓ Using {len(centerline_points)} polygon points as centerline for lane {lane_id}")
-            
+            # Create lane with centerline points
             lane = Lane(
                 lane_id=lane_id,
                 start_point=start_point,
                 end_point=end_point,
                 speed_limit=30.0,
                 lane_width=3.5,
-                polygon_points=world_points,  # Pass polygon points to detect missing edge
-                centerline_points=centerline_points  # Pass centerline points if available
+                centerline_points=centerline_world_points
             )
             
-            # Check if spawn is enabled for this lane (using centerline first point)
+            # Check if spawn is enabled for this lane (spawn at first point)
             spawn_enabled = lane_info.get('spawn_enabled', False)
-            if spawn_enabled and centerline_points and len(centerline_points) > 0:
+            if spawn_enabled and centerline_world_points and len(centerline_world_points) > 0:
                 # Use first point of centerline as spawn position
-                first_point_world = centerline_points[0]
+                first_point_world = centerline_world_points[0]
                 lane.spawn_position = first_point_world
                 # Calculate spawn direction from first to second point (if available)
-                if len(centerline_points) >= 2:
-                    second_point_world = centerline_points[1]
+                if len(centerline_world_points) >= 2:
+                    second_point_world = centerline_world_points[1]
                     dx = second_point_world.x - first_point_world.x
                     dy = second_point_world.y - first_point_world.y
                     length = np.sqrt(dx**2 + dy**2)
@@ -646,22 +542,17 @@ class TrafficSimulationModel(mesa.Model):
             # Store original image points for edge detection
             self.lane_image_points[lane_id] = points
             
-            # Check if manual spawn point is provided in JSON (legacy support)
-            spawn_points = lane_data.get('spawn_points', {})
-            if str(lane_id) in spawn_points and not spawn_enabled:
-                # Only use legacy spawn_points if spawn_enabled is not set
-                spawn_img_x, spawn_img_y = spawn_points[str(lane_id)]
-                # Convert image coordinates to world coordinates
-                spawn_world = image_to_world(spawn_img_x, spawn_img_y)
-                # Project manual spawn point onto lane centerline to ensure vehicles spawn centered
-                spawn_distance = lane.get_distance_from_start(spawn_world)
-                lane.spawn_position = lane.get_position_at_distance(spawn_distance)
-                # Ensure spawn_direction matches lane direction
-                lane.spawn_direction = lane.direction
-                # Mark this as a manual spawn point for filtering
-                self.manual_spawn_lanes.add(lane_id)
-                print(f"  ✓ Using manual spawn point for lane {lane_id}: ({spawn_img_x}, {spawn_img_y}) -> ({spawn_world.x:.1f}, {spawn_world.y:.1f}) -> projected to ({lane.spawn_position.x:.1f}, {lane.spawn_position.y:.1f})")
+            # Load adjacent lane connections from JSON if available
+            left_lane_id = lane_info.get('left_lane_id')
+            right_lane_id = lane_info.get('right_lane_id')
+            if left_lane_id is not None or right_lane_id is not None:
+                lane.set_adjacent_lanes(left_lane_id, right_lane_id)
+                if left_lane_id is not None:
+                    print(f"  ✓ Lane {lane_id} connected LEFT to lane {left_lane_id}")
+                if right_lane_id is not None:
+                    print(f"  ✓ Lane {lane_id} connected RIGHT to lane {right_lane_id}")
             
+            road = Road(road_id, f"Custom_Lane_{lane_id}")
             road.add_lane(lane)
             self.road_network.add_road(road)
             
@@ -672,13 +563,10 @@ class TrafficSimulationModel(mesa.Model):
             
             print(f"  Created lane {lane_id}: ({start_point.x:.1f}, {start_point.y:.1f}) -> ({end_point.x:.1f}, {end_point.y:.1f}){spawn_info}")
             
-            # Debug: Print lane direction for vertical lanes
-            if lane_id in [6, 7, 8, 9]:
-                lane_dir = lane.direction
-                angle_deg = np.arctan2(lane_dir[1], lane_dir[0]) * 180 / np.pi
-                print(f"    Lane {lane_id} direction: ({lane_dir[0]:.3f}, {lane_dir[1]:.3f}), angle: {angle_deg:.1f}°")
-            
             road_id += 1
+        
+        # Create lane-changing connection lanes
+        self._create_lane_change_connections(lane_data, image_to_world, road_id)
         
         # After all lanes are created, detect turning lanes (lanes that physically connect)
         print("\nDetecting turning lanes (physically connected lanes)...")
@@ -686,10 +574,105 @@ class TrafficSimulationModel(mesa.Model):
         
         print(f"✅ Created custom road network with {len(self.road_network.all_lanes)} lanes")
     
+    def _create_lane_change_connections(self, lane_data: Dict, image_to_world, start_road_id: int):
+        """Create lanes for lane-changing connections."""
+        connections = lane_data.get('lane_connections', [])
+        if not connections:
+            return
+        
+        print(f"\nCreating {len(connections)} lane-changing connection(s)...")
+        road_id = start_road_id
+        
+        for conn in connections:
+            source_lane_id = conn['source_lane_id']
+            target_lane_id = conn['target_lane_id']
+            connection_points = conn.get('points', [])
+            
+            if len(connection_points) < 2:
+                print(f"⚠ Skipping connection {source_lane_id} -> {target_lane_id}: needs at least 2 points")
+                continue
+            
+            # Get source and target lanes
+            source_lane = self.road_network.get_lane(source_lane_id)
+            target_lane = self.road_network.get_lane(target_lane_id)
+            
+            if not source_lane or not target_lane:
+                print(f"⚠ Skipping connection {source_lane_id} -> {target_lane_id}: lane not found")
+                continue
+            
+            # Convert connection points to world coordinates
+            connection_world_points = []
+            for px, py in connection_points:
+                world_point = image_to_world(px, py)
+                connection_world_points.append(world_point)
+            
+            # Snap first point to source lane's end (or nearest point on centerline)
+            if connection_world_points:
+                # Snap first point to source lane's centerline
+                first_point = connection_world_points[0]
+                snapped_first = source_lane.snap_point_to_centerline(first_point)
+                connection_world_points[0] = snapped_first
+                
+                # Snap last point to target lane's centerline
+                last_point = connection_world_points[-1]
+                snapped_last = target_lane.snap_point_to_centerline(last_point)
+                connection_world_points[-1] = snapped_last
+            
+            # Also snap intermediate points that are close to lanes
+            for i in range(1, len(connection_world_points) - 1):
+                point = connection_world_points[i]
+                
+                # Check distance to source lane
+                dist_to_source = point.distance_to(source_lane.snap_point_to_centerline(point))
+                # Check distance to target lane
+                dist_to_target = point.distance_to(target_lane.snap_point_to_centerline(point))
+                
+                # If point is very close to a lane, snap it to that lane
+                snap_threshold = 5.0  # meters
+                if dist_to_source < snap_threshold and dist_to_source < dist_to_target:
+                    connection_world_points[i] = source_lane.snap_point_to_centerline(point)
+                elif dist_to_target < snap_threshold:
+                    connection_world_points[i] = target_lane.snap_point_to_centerline(point)
+            
+            start_point = connection_world_points[0]
+            end_point = connection_world_points[-1]
+            
+            # Create a connection lane (for lane-changing)
+            # Use a special lane ID (negative or high number to avoid conflicts)
+            connection_lane_id = 10000 + road_id  # Use high ID to avoid conflicts
+            
+            connection_lane = Lane(
+                lane_id=connection_lane_id,
+                start_point=start_point,
+                end_point=end_point,
+                speed_limit=30.0,
+                lane_width=3.5,
+                centerline_points=connection_world_points
+            )
+            
+            # Store connection metadata
+            connection_lane.source_lane_id = source_lane_id
+            connection_lane.target_lane_id = target_lane_id
+            connection_lane.is_lane_change_connection = True
+            
+            road = Road(road_id, f"LaneChange_{source_lane_id}_to_{target_lane_id}")
+            road.add_lane(connection_lane)
+            self.road_network.add_road(road)
+            
+            # Add connection to source lane's connected lanes
+            source_lane.add_connected_lane(connection_lane_id, 'lane_change')
+            
+            # Also add direct connection from source to target lane (for automatic transition)
+            if target_lane_id not in source_lane.connected_lanes:
+                source_lane.add_connected_lane(target_lane_id, 'lane_change')
+            
+            print(f"  ✓ Created lane-changing connection: Lane {source_lane_id} -> Lane {target_lane_id} (connection lane {connection_lane_id})")
+            
+            road_id += 1
+    
     def _detect_turning_lanes(self):
         """
-        Automatically detect and connect turning lanes that physically coincide with target lanes.
-        Turning lanes are lanes whose polygons overlap at endpoints with other lanes.
+        Automatically detect and connect turning lanes that physically connect at endpoints.
         Access lanes (that just end) remain unconnected.
         """
         connection_threshold = 5.0  # meters - max distance to consider lanes as connecting
@@ -708,7 +691,7 @@ class TrafficSimulationModel(mesa.Model):
                     continue
                 
                 # Check if lane A's end connects to lane B's start (A -> B turning lane)
-                if lane_a.polygons_overlap_at_endpoints(lane_b, connection_threshold):
+                if lane_a.lanes_connect_at_endpoints(lane_b, connection_threshold):
                     # Determine route type based on angle between lanes
                     route_type = self._determine_route_type(lane_a, lane_b)
                     
@@ -719,7 +702,7 @@ class TrafficSimulationModel(mesa.Model):
                         print(f"  Connected lane {lane_id_a} -> lane {lane_id_b} ({route_type} turn)")
                 
                 # Check if lane B's end connects to lane A's start (B -> A turning lane)
-                if lane_b.polygons_overlap_at_endpoints(lane_a, connection_threshold):
+                if lane_b.lanes_connect_at_endpoints(lane_a, connection_threshold):
                     # Determine route type based on angle between lanes
                     route_type = self._determine_route_type(lane_b, lane_a)
                     
@@ -819,10 +802,10 @@ class TrafficSimulationModel(mesa.Model):
         """
         Get lanes where vehicles can spawn.
         Only lanes that:
-        1. Have a missing edge (spawn_position detected)
-        2. Missing edge is near the image edge
+        1. Have spawn_position set (either manually or at first centerline point)
+        2. Spawn position is near the image edge
         3. Lane direction points inward (toward center of image)
-        4. Missing edge endpoints are not connected to another lane
+        4. Lane is not connected to another lane at spawn point
         
         Returns:
             List of lane IDs where vehicles can spawn
@@ -1304,6 +1287,49 @@ class TrafficSimulationModel(mesa.Model):
             Length of the lane in meters
         """
         return self.road_network.get_lane_length(lane_id)
+    
+    def is_lane_end_at_frame_edge(self, lane_id: int) -> bool:
+        """
+        Check if a lane's end point is near the frame edge.
+        Vehicles should only be removed if they reach the end of lanes that end at frame edges.
+        
+        Args:
+            lane_id: ID of the lane
+            
+        Returns:
+            True if lane end is near frame edge, False otherwise
+        """
+        # Get lane and its end point
+        lane = self.road_network.get_lane(lane_id)
+        if not lane:
+            return False
+        
+        # Get end point in world coordinates
+        end_point_world = lane.end_point
+        
+        # If lane has centerline points, use the last centerline point as end
+        if lane.centerline_points and len(lane.centerline_points) > 0:
+            end_point_world = lane.centerline_points[-1]
+        
+        # Transformation parameters (same as in _create_custom_road_network)
+        offset_x = 2064.0  # ROI center X
+        offset_y = 526.0   # ROI center Y
+        scale = 0.3507     # pixels per meter
+        
+        # Convert world coordinates to image coordinates
+        img_x = end_point_world.x * scale + offset_x
+        img_y = offset_y - end_point_world.y * scale  # Flip Y-axis back
+        
+        # Threshold for considering a point "at the edge" (in pixels)
+        edge_threshold = 100  # pixels from edge
+        
+        # Check if end point is near any edge
+        at_left_edge = img_x <= edge_threshold
+        at_right_edge = img_x >= self.image_width - edge_threshold
+        at_top_edge = img_y <= edge_threshold
+        at_bottom_edge = img_y >= self.image_height - edge_threshold
+        
+        return at_left_edge or at_right_edge or at_top_edge or at_bottom_edge
     
     def get_lane_position(self, lane_id: int) -> tuple:
         """

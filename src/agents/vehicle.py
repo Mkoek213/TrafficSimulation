@@ -449,40 +449,25 @@ class Vehicle(mesa.Agent):
         lane_length = self.model.get_lane_length(self.lane_id)
         if next_position >= lane_length:
             # Vehicle has reached end of lane - try to transition to connected lane
-            current_lane = self.model.road_network.get_lane(self.lane_id)
-            lane_type = current_lane.get_lane_type() if current_lane else 'unknown'
-            
             if not self._try_lane_transition():
-                # No connected lane available
-                if lane_type == 'access':
-                    # Access lane: stop at end (lane ends without connection)
-                    self.position = lane_length
-                    self.speed = 0
-                    # Remove vehicle if it reaches the end of an access lane
-                    # (Access lanes end without connection, so vehicles should exit)
-                    if self.position >= lane_length - 0.1:  # Very close to end
-                        # Mark vehicle for removal
-                        self.model.remove_vehicle(self)
-                        return  # Exit step early since vehicle is being removed
-                else:
-                    # Unknown/no polygon info: fallback behavior - wrap around
-                    # But first check if there's space at the start to avoid immediate collision
-                    wrap_position = next_position - lane_length
-                    
-                    # Check for collisions at wrap position
-                    lane_vehicles = self.model.get_vehicles_in_lane(self.lane_id)
-                    min_distance = float('inf')
-                    for vehicle in lane_vehicles:
-                        if vehicle == self:
-                            continue
-                        distance = abs(vehicle.position - wrap_position)
-                        min_distance = min(min_distance, distance)
-                    
-                    # Only wrap if there's enough space (at least 20m)
-                    if min_distance > 20.0:
-                        self.position = wrap_position
+                # No direct connected lane available
+                # Check if there's an adjacent lane connection available (lane-changing connection)
+                # This indicates the end of an access lane, so vehicle should transition
+                if not self._try_adjacent_lane_transition():
+                    # No adjacent lane connection either
+                    # Only remove vehicle if the lane end is at the frame edge
+                    # Otherwise, vehicles at turning lanes should wait for space to transition
+                    if self.model.is_lane_end_at_frame_edge(self.lane_id):
+                        # Lane ends at frame edge - remove vehicle (it exits the simulation)
+                        self.position = lane_length
+                        self.speed = 0
+                        # Remove vehicle when it reaches the end of the lane
+                        if self.position >= lane_length - 0.1:  # Very close to end
+                            self.model.remove_vehicle(self)
+                            return  # Exit step early since vehicle is being removed
                     else:
-                        # Not enough space - stop at end of lane
+                        # Lane ends but not at frame edge (e.g., turning lane)
+                        # Stop and wait - vehicle should transition to connected lane when space available
                         self.position = lane_length
                         self.speed = 0
             else:
@@ -578,6 +563,50 @@ class Vehicle(mesa.Agent):
         
         # Fallback to first available
         return current_lane.connected_lanes[0] if current_lane.connected_lanes else None
+    
+    def _try_adjacent_lane_transition(self) -> bool:
+        """
+        Try to transition to an adjacent lane using lane-changing connections.
+        This is used when a lane ends and there's no direct connection, but
+        there's a lane-changing connection available (indicates end of access lane).
+        
+        Returns:
+            True if transition successful, False otherwise
+        """
+        current_lane = self.model.road_network.get_lane(self.lane_id)
+        if not current_lane:
+            return False
+        
+        # Check all connected lanes for lane-changing connections
+        for connected_lane_id in current_lane.connected_lanes:
+            connected_lane = self.model.road_network.get_lane(connected_lane_id)
+            if not connected_lane:
+                continue
+            
+            # Check if this is a lane-changing connection lane
+            if connected_lane.is_lane_change_connection and connected_lane.target_lane_id is not None:
+                target_lane_id = connected_lane.target_lane_id
+                
+                # Check if the target lane has space at the beginning
+                target_lane_vehicles = self.model.get_vehicles_in_lane(target_lane_id)
+                min_start_distance = 20.0  # Need at least 20m clearance
+                has_space = True
+                for vehicle in target_lane_vehicles:
+                    if vehicle.position < min_start_distance:
+                        has_space = False
+                        break
+                
+                if has_space:
+                    # Transition through the connection lane first, then to target
+                    # For simplicity, transition directly to target lane
+                    old_lane_id = self.lane_id
+                    self.lane_id = target_lane_id
+                    self.position = 0.0  # Start at beginning of target lane
+                    
+                    print(f"Vehicle {self.unique_id} transitioned from lane {old_lane_id} to lane {target_lane_id} via adjacent lane connection")
+                    return True
+        
+        return False
     
     def _consider_lane_change(self):
         """

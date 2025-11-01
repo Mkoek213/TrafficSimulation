@@ -1,176 +1,165 @@
 # Traffic Simulation with Krauss Car-Following Model
 
-A traffic simulation system built with MESA and PyGame that implements the Krauss car-following model for realistic vehicle behavior. The simulation supports lane-changing, intersections, and can load real-world road networks from OpenStreetMap data.
+A traffic simulation system that generates realistic vehicle trajectories on custom-marked road networks. The simulation uses the Krauss car-following model and MOBIL lane-changing model to create realistic vehicle behavior.
 
-## Features
+## What It Does
 
-- **Krauss Car-Following Model**: Realistic vehicle behavior with safe following distances and random deceleration
-- **Lane-Changing**: Vehicles can change lanes when safe conditions are met
-- **Road Networks**: Support for multi-lane roads and intersections
-- **Real-time Visualization**: PyGame-based visualization with zoom, pan, and statistics
-- **OpenStreetMap Integration**: Load real-world road networks from OSM data
-- **MESA Framework**: Agent-based modeling with proper scheduling and state management
-- **Configurable Parameters**: Adjustable simulation parameters for different scenarios
+This tool allows you to:
+1. **Mark custom road networks** on aerial images using an interactive UI
+2. **Simulate traffic** with realistic car-following and lane-changing behavior
+3. **Generate CSV output** with vehicle bounding boxes for visualization
+4. **Visualize results** as videos showing vehicles moving along marked lanes
 
-## Installation
+## Quick Start
 
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd TrafficSimulation
-```
+### 1. Install Dependencies
 
-2. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-## Quick Start
+### 2. Mark Lanes on Your Image
 
-### Basic Simulation
-Run the simulation with default parameters:
+Use the interactive tool to mark centerlines, spawn points, and lane connections:
+
 ```bash
-python main.py
+python mark_centerlines_ui.py --image eda/data/media/SiteA.jpg --output eda/data/lanes.json
 ```
 
-### Custom Parameters
+**Controls:**
+- **Draw Mode** (default): Left-click to add points to a centerline
+  - `n`: Start new lane
+  - `s`: Save current lane
+  - `u`: Undo last point
+  - `1-9, 0`: Select lane by number
+- **Spawn Mode** (`t`): Toggle spawn points on lanes
+  - `t`: Toggle spawn point for selected lane (vehicles spawn at first point)
+- **Connection Mode** (`c`): Create lane-changing connections
+  - Left-click on source lane → target lane to create transition path
+  - `ENTER`: Finish connection
+  - `ESC`: Cancel connection
+- **Navigation**:
+  - Right mouse + drag: Pan
+  - `+/-`: Zoom in/out
+  - `r`: Reset zoom/pan
+- **Save**: `w` to save all data, `q` to quit
+
+### 3. Run Simulation
+
+Run the simulation with your marked lanes:
+
 ```bash
-python main.py --width 1500 --height 1000 --max-vehicles 100 --spawn-rate 0.2
+python run_mesa_simulation.py \
+    --custom-lanes eda/data/lanes.json \
+    --output mesa_simulation.csv \
+    --frames 300
 ```
 
-### Headless Mode
-Run without visualization for performance testing:
+**Key Parameters:**
+- `--custom-lanes`: Path to your marked lanes JSON file
+- `--output`: Output CSV file path
+- `--frames`: Number of frames to simulate (default: 900)
+- `--fps`: Frames per second (default: 8.0)
+- `--max-vehicles`: Maximum vehicles in simulation (default: 150)
+- `--spawn-rate`: Vehicles per second (default: 0.5)
+
+### 4. Visualize Results
+
+Create a video visualization of the simulation:
+
 ```bash
-python main.py --headless --steps 1000
+python eda/vis/traffic_visualizer.py \
+    --image eda/data/media/SiteA.jpg \
+    --csv mesa_simulation.csv \
+    --output traffic_video.mp4
 ```
 
-## Usage
-
-### Command Line Options
-
-- `--width`: Simulation width (default: 1000)
-- `--height`: Simulation height (default: 1000)
-- `--time-step`: Time step in seconds (default: 0.1)
-- `--spawn-rate`: Vehicle spawn rate per second (default: 0.1)
-- `--max-vehicles`: Maximum number of vehicles (default: 50)
-- `--viz-width`: Visualization window width (default: 1200)
-- `--viz-height`: Visualization window height (default: 800)
-- `--fps`: Target FPS (default: 60)
-- `--headless`: Run without visualization
-- `--steps`: Number of simulation steps (headless mode only)
-
-### Controls
-
-When running with visualization:
-- **SPACE**: Pause/Resume simulation
-- **R**: Reset simulation
-- **Mouse Wheel**: Zoom in/out
-- **Mouse Drag**: Pan around the simulation
-- **ESC**: Exit
-
-## Architecture
-
-### Core Components
-
-1. **KraussModel** (`src/utils/krauss_model.py`): Implements the Krauss car-following model
-2. **Vehicle** (`src/agents/vehicle.py`): Vehicle agent with car-following and lane-changing behavior
-3. **RoadNetwork** (`src/models/road_network.py`): Road network representation with lanes and intersections
-4. **TrafficSimulationModel** (`src/models/traffic_model.py`): Main MESA model managing the simulation
-5. **TrafficVisualization** (`src/visualization/pygame_viz.py`): PyGame-based visualization
-6. **OSMNetworkLoader** (`src/utils/osm_loader.py`): OpenStreetMap data loading
-
-### Krauss Model Implementation
-
-The Krauss car-following model calculates vehicle speed based on:
-
-1. **Safe Speed**: Based on distance to leading vehicle and reaction time
-2. **Desired Speed**: Free flow speed or safe following speed
-3. **Random Deceleration**: Stochastic driver behavior
-4. **Physical Constraints**: Maximum acceleration and deceleration limits
+## How It Works
 
 ### Vehicle Behavior
 
-- **Car-Following**: Vehicles maintain safe distances using the Krauss model
-- **Lane-Changing**: Vehicles can change lanes when safe conditions are met
-- **Speed Adaptation**: Vehicles adjust speed based on traffic conditions
-- **Collision Avoidance**: Built-in safety mechanisms prevent collisions
+- **Krauss Car-Following Model**: Vehicles maintain safe following distances based on speed, reaction time, and distance to leader
+- **MOBIL Lane-Changing**: Vehicles change lanes when it's beneficial and safe
+- **Lane Following**: Vehicles strictly follow marked centerlines
+- **Automatic Transitions**: Vehicles automatically transition to connected lanes at lane ends
 
-## Road Network
+### Lane Marking
 
-### Creating Custom Networks
+- **Centerlines**: Single lines marking the path vehicles follow
+- **Spawn Points**: Marked on lanes where vehicles should spawn (at first point)
+- **Lane Connections**: Transition paths between lanes for lane-changing or merging
 
-```python
-from src.models.road_network import RoadNetwork, Point
+### Coordinate System
 
-# Create a new road network
-network = RoadNetwork()
+The simulation uses a world coordinate system that's transformed from image coordinates:
+- Image coordinates are converted to world coordinates using offset and scale
+- Default: `offset_x=2064.0`, `offset_y=526.0`, `scale=0.3507` (pixels per meter)
+- Vehicles spawn and move in world coordinates, then converted back to image coordinates for CSV output
 
-# Create a highway
-start_point = Point(0, 0)
-end_point = Point(1000, 0)
-highway = network.create_simple_highway(start_point, end_point, num_lanes=3)
+## Project Structure
+
+```
+TrafficSimulation/
+├── mark_centerlines_ui.py    # Interactive lane marking tool
+├── run_mesa_simulation.py     # Main simulation runner
+├── src/
+│   ├── agents/
+│   │   └── vehicle.py        # Vehicle agent with car-following and lane-changing
+│   ├── models/
+│   │   ├── traffic_model.py  # Main MESA simulation model
+│   │   └── road_network.py   # Road network and lane representation
+│   └── utils/
+│       ├── krauss_model.py   # Krauss car-following model
+│       ├── mobil_model.py    # MOBIL lane-changing model
+│       └── simulation_to_csv.py  # CSV conversion utility
+└── eda/
+    ├── vis/
+    │   └── traffic_visualizer.py  # Video visualization tool
+    └── data/
+        ├── lanes.json        # Marked lane data
+        └── media/
+            └── SiteA.jpg     # Background image
 ```
 
-### OpenStreetMap Integration
+## Features
 
-```python
-from src.utils.osm_loader import OSMNetworkLoader
+- ✅ Interactive lane marking with zoom/pan
+- ✅ Realistic car-following behavior (Krauss model)
+- ✅ Intelligent lane-changing (MOBIL model)
+- ✅ Custom road networks from marked images
+- ✅ Vehicle spawning at designated points
+- ✅ Automatic lane transitions at connections
+- ✅ CSV output for visualization
+- ✅ Video generation from simulation results
 
-# Load network from place name
-loader = OSMNetworkLoader()
-network = loader.load_network_from_place("Manhattan, New York, USA")
-
-# Load network from bounding box
-network = loader.load_network_from_bbox(40.7, 40.6, -74.0, -74.1)
-```
-
-## Simulation Parameters
-
-### Vehicle Parameters
-- **Max Speed**: 25-35 m/s (90-126 km/h)
-- **Max Acceleration**: 1.5-2.5 m/s²
-- **Max Deceleration**: -3.5 to -4.5 m/s²
-- **Reaction Time**: 1.0 seconds
-- **Random Deceleration**: 10% probability, 0.5 m/s² max
+## Technical Details
 
 ### Simulation Parameters
+
 - **Time Step**: 0.1 seconds
-- **Spawn Rate**: 0.1 vehicles/second
-- **Max Vehicles**: 50 (configurable)
+- **Vehicle Speed**: 5x faster than normal (for realistic frame generation)
+- **FPS**: 8 frames per second (default)
+- **Max Vehicles**: 150 (configurable)
+- **Spawn Rate**: 0.5 vehicles/second (configurable)
 
-## Performance
+### Models Used
 
-The simulation is optimized for real-time performance:
-- Efficient vehicle collision detection
-- Optimized rendering with PyGame
-- Configurable frame rates and vehicle limits
-- Headless mode for batch processing
+- **Krauss Model**: Calculates safe following speed based on distance to leader, reaction time, and random deceleration
+- **MOBIL Model**: Evaluates lane-changing incentives considering acceleration gains and safety
 
-## Future Enhancements
+## Example Workflow
 
-- **Traffic Lights**: Advanced intersection control
-- **Route Planning**: A* pathfinding for vehicles
-- **Traffic Jams**: Congestion modeling
-- **Different Vehicle Types**: Trucks, motorcycles, etc.
-- **Weather Effects**: Rain, snow impact on driving
-- **Accident Simulation**: Collision detection and response
-- **Data Export**: CSV/JSON output for analysis
+```bash
+# 1. Mark lanes on your image
+python mark_centerlines_ui.py --image eda/data/media/SiteA.jpg --output eda/data/lanes.json
 
-## Contributing
+# 2. Run simulation
+python run_mesa_simulation.py --custom-lanes eda/data/lanes.json --output mesa_simulation.csv --frames 300
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+# 3. Visualize
+python eda/vis/traffic_visualizer.py --image eda/data/media/SiteA.jpg --csv mesa_simulation.csv --output video.mp4
+```
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- MESA framework for agent-based modeling
-- PyGame for visualization
-- OpenStreetMap for road data
-- Krauss et al. for the car-following model
+This project is licensed under the MIT License.
