@@ -543,14 +543,15 @@ class TrafficSimulationModel(mesa.Model):
             self.lane_image_points[lane_id] = points
             
             # Load adjacent lane connections from JSON if available
+            # These take precedence over automatic detection
             left_lane_id = lane_info.get('left_lane_id')
             right_lane_id = lane_info.get('right_lane_id')
             if left_lane_id is not None or right_lane_id is not None:
                 lane.set_adjacent_lanes(left_lane_id, right_lane_id)
                 if left_lane_id is not None:
-                    print(f"  ✓ Lane {lane_id} connected LEFT to lane {left_lane_id}")
+                    print(f"  ✓ Lane {lane_id} manually set LEFT to lane {left_lane_id} (from JSON)")
                 if right_lane_id is not None:
-                    print(f"  ✓ Lane {lane_id} connected RIGHT to lane {right_lane_id}")
+                    print(f"  ✓ Lane {lane_id} manually set RIGHT to lane {right_lane_id} (from JSON)")
             
             road = Road(road_id, f"Custom_Lane_{lane_id}")
             road.add_lane(lane)
@@ -571,6 +572,10 @@ class TrafficSimulationModel(mesa.Model):
         # After all lanes are created, detect turning lanes (lanes that physically connect)
         print("\nDetecting turning lanes (physically connected lanes)...")
         self._detect_turning_lanes()
+        
+        # Automatically detect and set adjacent lanes from lane connections
+        print("\nDetecting adjacent lanes from lane connections...")
+        self._detect_adjacent_lanes_from_connections(lane_data)
         
         print(f"✅ Created custom road network with {len(self.road_network.all_lanes)} lanes")
     
@@ -606,33 +611,78 @@ class TrafficSimulationModel(mesa.Model):
                 world_point = image_to_world(px, py)
                 connection_world_points.append(world_point)
             
-            # Snap first point to source lane's end (or nearest point on centerline)
-            if connection_world_points:
-                # Snap first point to source lane's centerline
-                first_point = connection_world_points[0]
-                snapped_first = source_lane.snap_point_to_centerline(first_point)
-                connection_world_points[0] = snapped_first
-                
-                # Snap last point to target lane's centerline
-                last_point = connection_world_points[-1]
-                snapped_last = target_lane.snap_point_to_centerline(last_point)
-                connection_world_points[-1] = snapped_last
+            # Use interpolation to find which lane each point belongs to and snap to nearest lane
+            # For high-resolution images (5k x 3k), use more lenient tolerance
+            # 10 meters ≈ 3.5 pixels, which is reasonable for point matching
+            tolerance = 10.0  # meters - maximum distance to consider point as "on" a lane
             
-            # Also snap intermediate points that are close to lanes
+            # Process first point - should be on source lane
+            if connection_world_points:
+                first_point = connection_world_points[0]
+                # Check if point lies on source lane using interpolation
+                if source_lane.point_lies_on_lane(first_point, tolerance):
+                    # Point is on source lane, snap it
+                    snapped_first = source_lane.snap_point_to_centerline(first_point)
+                    connection_world_points[0] = snapped_first
+                else:
+                    # Point is not exactly on source lane, find nearest lane and snap
+                    nearest_lane_id = self.road_network.find_lane_for_point(first_point, tolerance)
+                    if nearest_lane_id is not None:
+                        nearest_lane = self.road_network.get_lane(nearest_lane_id)
+                        if nearest_lane:
+                            snapped_first = nearest_lane.snap_point_to_centerline(first_point)
+                            connection_world_points[0] = snapped_first
+                            print(f"  ⚠ Adjusted first connection point to snap to lane {nearest_lane_id} (was {source_lane_id})")
+                    else:
+                        # Fallback: snap to source lane anyway
+                        snapped_first = source_lane.snap_point_to_centerline(first_point)
+                        connection_world_points[0] = snapped_first
+                
+                # Process last point - should be on target lane
+                last_point = connection_world_points[-1]
+                # Check if point lies on target lane using interpolation
+                if target_lane.point_lies_on_lane(last_point, tolerance):
+                    # Point is on target lane, snap it
+                    snapped_last = target_lane.snap_point_to_centerline(last_point)
+                    connection_world_points[-1] = snapped_last
+                else:
+                    # Point is not exactly on target lane, find nearest lane and snap
+                    nearest_lane_id = self.road_network.find_lane_for_point(last_point, tolerance)
+                    if nearest_lane_id is not None:
+                        nearest_lane = self.road_network.get_lane(nearest_lane_id)
+                        if nearest_lane:
+                            snapped_last = nearest_lane.snap_point_to_centerline(last_point)
+                            connection_world_points[-1] = snapped_last
+                            print(f"  ⚠ Adjusted last connection point to snap to lane {nearest_lane_id} (was {target_lane_id})")
+                    else:
+                        # Fallback: snap to target lane anyway
+                        snapped_last = target_lane.snap_point_to_centerline(last_point)
+                        connection_world_points[-1] = snapped_last
+            
+            # Also snap intermediate points that are close to lanes using interpolation
             for i in range(1, len(connection_world_points) - 1):
                 point = connection_world_points[i]
                 
-                # Check distance to source lane
-                dist_to_source = point.distance_to(source_lane.snap_point_to_centerline(point))
-                # Check distance to target lane
-                dist_to_target = point.distance_to(target_lane.snap_point_to_centerline(point))
+                # Check which lane this point belongs to using interpolation
+                nearest_lane_id = self.road_network.find_lane_for_point(point, tolerance)
                 
-                # If point is very close to a lane, snap it to that lane
-                snap_threshold = 5.0  # meters
-                if dist_to_source < snap_threshold and dist_to_source < dist_to_target:
-                    connection_world_points[i] = source_lane.snap_point_to_centerline(point)
-                elif dist_to_target < snap_threshold:
-                    connection_world_points[i] = target_lane.snap_point_to_centerline(point)
+                if nearest_lane_id is not None:
+                    nearest_lane = self.road_network.get_lane(nearest_lane_id)
+                    if nearest_lane:
+                        # Snap to the nearest lane
+                        snapped_point = nearest_lane.snap_point_to_centerline(point)
+                        connection_world_points[i] = snapped_point
+                else:
+                    # If not on any lane, check distance to source and target lanes
+                    dist_to_source = point.distance_to(source_lane.snap_point_to_centerline(point))
+                    dist_to_target = point.distance_to(target_lane.snap_point_to_centerline(point))
+                    
+                    # If point is very close to a lane, snap it to that lane
+                    snap_threshold = 5.0  # meters
+                    if dist_to_source < snap_threshold and dist_to_source < dist_to_target:
+                        connection_world_points[i] = source_lane.snap_point_to_centerline(point)
+                    elif dist_to_target < snap_threshold:
+                        connection_world_points[i] = target_lane.snap_point_to_centerline(point)
             
             start_point = connection_world_points[0]
             end_point = connection_world_points[-1]
@@ -716,6 +766,271 @@ class TrafficSimulationModel(mesa.Model):
             print(f"✅ Automatically connected {connections_made} turning lane(s)")
         else:
             print("  No turning lanes detected (all lanes are access lanes)")
+    
+    def _detect_adjacent_lanes_from_connections(self, lane_data: Dict):
+        """
+        Automatically detect adjacent lanes from lane_connections.
+        If two lanes have connection points between them, they are likely adjacent.
+        Uses interpolation to verify that connection points lie on the lanes.
+        
+        Args:
+            lane_data: Dictionary containing lane data from JSON
+        """
+        connections = lane_data.get('lane_connections', [])
+        if not connections:
+            print("  No lane connections found for adjacent lane detection")
+            return
+        
+        # Build a mapping of which lanes connect to which
+        # Key: (source_lane_id, target_lane_id), Value: count of connections
+        # Also track bidirectional connections (A->B and B->A) which strongly indicate adjacency
+        lane_pairs = {}
+        bidirectional_pairs = set()  # Track pairs that have connections in both directions
+        
+        # First pass: collect all connections
+        for conn in connections:
+            source_lane_id = conn['source_lane_id']
+            target_lane_id = conn['target_lane_id']
+            connection_points = conn.get('points', [])
+            
+            if len(connection_points) < 2:
+                continue
+            
+            pair_key = (source_lane_id, target_lane_id)
+            if pair_key not in lane_pairs:
+                lane_pairs[pair_key] = []
+            lane_pairs[pair_key].extend(connection_points)
+        
+        # Second pass: detect bidirectional connections
+        for pair_key in lane_pairs.keys():
+            source_lane_id, target_lane_id = pair_key
+            reverse_key = (target_lane_id, source_lane_id)
+            if reverse_key in lane_pairs:
+                bidirectional_pairs.add(tuple(sorted([source_lane_id, target_lane_id])))
+        
+        print(f"  Found {len(bidirectional_pairs)} bidirectional lane pairs (strong candidates for adjacency)")
+        
+        # Transformation parameters (same as in _create_custom_road_network)
+        offset_x = lane_data.get('offset_x', 2064.0)
+        offset_y = lane_data.get('offset_y', 526.0)
+        scale = lane_data.get('scale', 0.3507)
+        
+        def image_to_world(img_x: float, img_y: float) -> Point:
+            """Convert image coordinates to world coordinates."""
+            world_x = (img_x - offset_x) / scale
+            world_y = (offset_y - img_y) / scale
+            return Point(world_x, world_y)
+        
+        # For each pair of lanes that have connections, check if they should be adjacent
+        # For high-resolution images, use more lenient tolerance
+        tolerance = 10.0  # meters - maximum distance to consider lanes as adjacent
+        adjacent_lanes_detected = 0
+        
+        print(f"  Checking {len(lane_pairs)} lane pairs for adjacent relationships...")
+        
+        for (source_lane_id, target_lane_id), points in lane_pairs.items():
+            source_lane = self.road_network.get_lane(source_lane_id)
+            target_lane = self.road_network.get_lane(target_lane_id)
+            
+            if not source_lane or not target_lane:
+                print(f"  ⚠ Skipping pair ({source_lane_id}, {target_lane_id}): lane not found")
+                continue
+            
+            # Check if lanes are parallel (similar direction)
+            source_dir = source_lane.direction
+            target_dir = target_lane.direction
+            dot_product = source_dir[0] * target_dir[0] + source_dir[1] * target_dir[1]
+            
+            print(f"  Checking lanes {source_lane_id} <-> {target_lane_id}: dot_product={dot_product:.3f}, parallel={dot_product >= 0.7}")
+            
+            # Lanes must be nearly parallel (dot product > 0.7)
+            if dot_product < 0.7:
+                print(f"    ❌ Not parallel enough (dot={dot_product:.3f} < 0.7)")
+                continue  # Not parallel enough to be adjacent
+            
+            # Check if this is a bidirectional connection (strong indicator of adjacency)
+            is_bidirectional = tuple(sorted([source_lane_id, target_lane_id])) in bidirectional_pairs
+            
+            # Check average distance between lanes by sampling connection points
+            total_distance = 0.0
+            valid_points = 0
+            
+            for px, py in points[:5]:  # Sample first 5 points
+                world_point = image_to_world(px, py)
+                
+                # Find closest points on both lanes
+                source_closest = source_lane.snap_point_to_centerline(world_point)
+                target_closest = target_lane.snap_point_to_centerline(world_point)
+                
+                # Calculate distance between lanes at this point
+                dist = source_closest.distance_to(target_closest)
+                
+                # For bidirectional connections, be more lenient (points don't need to be exactly on lanes)
+                if is_bidirectional:
+                    # Accept if distance is reasonable (adjacent lanes are typically 3.5-7m apart)
+                    if dist < 15.0:  # More lenient for bidirectional
+                        total_distance += dist
+                        valid_points += 1
+                else:
+                    # For unidirectional, check if point lies on either lane
+                    on_source = source_lane.point_lies_on_lane(world_point, tolerance)
+                    on_target = target_lane.point_lies_on_lane(world_point, tolerance)
+                    
+                    if (on_source or on_target) and dist < 10.0:
+                        total_distance += dist
+                        valid_points += 1
+            
+            if valid_points == 0:
+                print(f"    ❌ No valid points found (points checked: {len(points[:5])}, bidirectional={is_bidirectional})")
+                continue
+            
+            avg_distance = total_distance / valid_points
+            print(f"    Avg distance: {avg_distance:.2f}m, valid_points: {valid_points}, bidirectional={is_bidirectional}")
+            
+            # If average distance is reasonable (typical lane width is 3.5m, so adjacent lanes should be ~3.5-7m apart)
+            # For bidirectional connections, be more lenient with distance range
+            max_distance = 15.0 if is_bidirectional else 10.0
+            min_distance = 1.0 if is_bidirectional else 2.0
+            
+            if min_distance <= avg_distance <= max_distance:
+                # Determine which lane is left and which is right
+                # Use cross product to determine relative position
+                # For parallel lanes going same direction, cross product determines left/right
+                
+                # Get a sample point from each lane (use multiple points for better accuracy)
+                # Use points along the lane to determine spatial relationship
+                source_positions = [
+                    source_lane.get_position_at_distance(source_lane.length * 0.25),
+                    source_lane.get_position_at_distance(source_lane.length * 0.5),
+                    source_lane.get_position_at_distance(source_lane.length * 0.75)
+                ]
+                target_positions = [
+                    target_lane.get_position_at_distance(target_lane.length * 0.25),
+                    target_lane.get_position_at_distance(target_lane.length * 0.5),
+                    target_lane.get_position_at_distance(target_lane.length * 0.75)
+                ]
+                
+                # Calculate average cross product to determine left/right more reliably
+                cross_sum = 0.0
+                for i in range(len(source_positions)):
+                    source_pos = source_positions[i]
+                    target_pos = target_positions[i]
+                    
+                    # Vector from source to target
+                    vec_to_target = Point(target_pos.x - source_pos.x, target_pos.y - source_pos.y)
+                    
+                    # Cross product: dir × vec_to_target
+                    # In 2D: cross = dir.x * vec.y - dir.y * vec.x
+                    # If cross > 0: target is to the LEFT of the direction of travel
+                    # If cross < 0: target is to the RIGHT of the direction of travel
+                    cross = source_dir[0] * vec_to_target.y - source_dir[1] * vec_to_target.x
+                    cross_sum += cross
+                
+                avg_cross = cross_sum / len(source_positions)
+                
+                print(f"    Cross product: {avg_cross:.3f} (for lanes {source_lane_id} <-> {target_lane_id})")
+                
+                # CRITICAL: Only set adjacent lanes if they haven't been manually set from JSON
+                # This prevents overwriting correct manual assignments
+                if avg_cross > 0:
+                    # Target is to the LEFT of source (relative to direction of travel)
+                    # BUT: In standard coordinate systems, we need to verify this is correct
+                    # For now, check if already set manually - if so, don't overwrite
+                    if source_lane.left_lane_id is None and target_lane.right_lane_id is None:
+                        source_lane.left_lane_id = target_lane_id
+                        target_lane.right_lane_id = source_lane_id
+                        adjacent_lanes_detected += 1
+                        print(f"  ✓ Detected adjacent lanes: {source_lane_id} (left) <-> {target_lane_id} (right) [cross={avg_cross:.3f}]")
+                    elif source_lane.left_lane_id is not None:
+                        print(f"  ⏭️  Skipping - lane {source_lane_id} already has left_lane_id={source_lane.left_lane_id} (manual from JSON?)")
+                    elif target_lane.right_lane_id is not None:
+                        print(f"  ⏭️  Skipping - lane {target_lane_id} already has right_lane_id={target_lane.right_lane_id} (manual from JSON?)")
+                else:
+                    # Target is to the RIGHT of source (relative to direction of travel)
+                    if source_lane.right_lane_id is None and target_lane.left_lane_id is None:
+                        source_lane.right_lane_id = target_lane_id
+                        target_lane.left_lane_id = source_lane_id
+                        adjacent_lanes_detected += 1
+                        print(f"  ✓ Detected adjacent lanes: {source_lane_id} (right) <-> {target_lane_id} (left) [cross={avg_cross:.3f}]")
+                    elif source_lane.right_lane_id is not None:
+                        print(f"  ⏭️  Skipping - lane {source_lane_id} already has right_lane_id={source_lane.right_lane_id} (manual from JSON?)")
+                    elif target_lane.left_lane_id is not None:
+                        print(f"  ⏭️  Skipping - lane {target_lane_id} already has left_lane_id={target_lane.left_lane_id} (manual from JSON?)")
+        
+        if adjacent_lanes_detected > 0:
+            print(f"✅ Detected {adjacent_lanes_detected} adjacent lane relationship(s)")
+        else:
+            print("  ❌ No adjacent lanes detected from connections")
+            print("  This might be because:")
+            print("    - Lanes are not parallel enough (need dot_product > 0.7)")
+            print("    - Average distance between lanes is not in range 2-10m")
+            print("    - Connection points don't lie on the lanes")
+            
+            # Fallback: For bidirectional pairs, assume they're adjacent if they have many connections
+            print(f"\n  Trying fallback: Setting bidirectional pairs as adjacent...")
+            fallback_count = 0
+            for lane_pair in bidirectional_pairs:
+                lane_a_id, lane_b_id = lane_pair
+                lane_a = self.road_network.get_lane(lane_a_id)
+                lane_b = self.road_network.get_lane(lane_b_id)
+                
+                if not lane_a or not lane_b:
+                    continue
+                
+                # Check if they're at least somewhat parallel (relaxed requirement)
+                source_dir = lane_a.direction
+                target_dir = lane_b.direction
+                dot_product = source_dir[0] * target_dir[0] + source_dir[1] * target_dir[1]
+                
+                # More lenient: only require > 0.5 (approximately same general direction)
+                if dot_product > 0.5:
+                    # Determine left/right using cross product (use multiple points for accuracy)
+                    source_positions = [
+                        lane_a.get_position_at_distance(lane_a.length * 0.25),
+                        lane_a.get_position_at_distance(lane_a.length * 0.5),
+                        lane_a.get_position_at_distance(lane_a.length * 0.75)
+                    ]
+                    target_positions = [
+                        lane_b.get_position_at_distance(lane_b.length * 0.25),
+                        lane_b.get_position_at_distance(lane_b.length * 0.5),
+                        lane_b.get_position_at_distance(lane_b.length * 0.75)
+                    ]
+                    
+                    cross_sum = 0.0
+                    for i in range(len(source_positions)):
+                        vec_to_target = Point(target_positions[i].x - source_positions[i].x, 
+                                             target_positions[i].y - source_positions[i].y)
+                        cross = source_dir[0] * vec_to_target.y - source_dir[1] * vec_to_target.x
+                        cross_sum += cross
+                    
+                    avg_cross = cross_sum / len(source_positions)
+                    
+                    # Only set if not already manually set
+                    if avg_cross > 0:
+                        # Target is to the LEFT of source
+                        if lane_a.left_lane_id is None and lane_b.right_lane_id is None:
+                            lane_a.left_lane_id = lane_b_id
+                            lane_b.right_lane_id = lane_a_id
+                            fallback_count += 1
+                            print(f"    ✓ Fallback: Set lanes {lane_a_id} (left) <-> {lane_b_id} (right) [dot={dot_product:.3f}, cross={avg_cross:.3f}]")
+                        else:
+                            print(f"    ⏭️  Fallback skipped - already set manually (lane {lane_a_id}.left={lane_a.left_lane_id}, lane {lane_b_id}.right={lane_b.right_lane_id})")
+                    else:
+                        # Target is to the RIGHT of source
+                        if lane_a.right_lane_id is None and lane_b.left_lane_id is None:
+                            lane_a.right_lane_id = lane_b_id
+                            lane_b.left_lane_id = lane_a_id
+                            fallback_count += 1
+                            print(f"    ✓ Fallback: Set lanes {lane_a_id} (right) <-> {lane_b_id} (left) [dot={dot_product:.3f}, cross={avg_cross:.3f}]")
+                        else:
+                            print(f"    ⏭️  Fallback skipped - already set manually (lane {lane_a_id}.right={lane_a.right_lane_id}, lane {lane_b_id}.left={lane_b.left_lane_id})")
+                else:
+                    print(f"    ⚠ Skipping fallback for {lane_a_id}<->{lane_b_id}: not parallel enough (dot={dot_product:.3f})")
+            
+            if fallback_count > 0:
+                print(f"  ✅ Fallback set {fallback_count} adjacent lane relationship(s)")
+            else:
+                print(f"  ❌ Fallback also failed - no adjacent lanes set")
     
     def _determine_route_type(self, from_lane, to_lane) -> str:
         """
@@ -1032,18 +1347,18 @@ class TrafficSimulationModel(mesa.Model):
         self.vehicle_counter += 1
         
         # Random vehicle properties - various speeds (some fast, some slower)
-        # Speeds are multiplied by 5 for 5x faster movement
+        # Speeds are multiplied by 10 for 10x faster movement (much faster for demos)
         # Create more variation: 60% fast, 30% medium, 10% slow
         speed_roll = random.random()
         if speed_roll < 0.6:
-            # Fast vehicles (highway speeds) - 5x faster
-            max_speed = random.uniform(25.0, 35.0) * 5.0  # m/s (450-630 km/h equivalent)
+            # Fast vehicles (highway speeds) - 10x faster
+            max_speed = random.uniform(25.0, 35.0) * 10.0  # m/s (900-1260 km/h equivalent)
         elif speed_roll < 0.9:
-            # Medium speed vehicles (city speeds) - 5x faster
-            max_speed = random.uniform(15.0, 22.0) * 5.0  # m/s (270-395 km/h equivalent)
+            # Medium speed vehicles (city speeds) - 10x faster
+            max_speed = random.uniform(15.0, 22.0) * 10.0  # m/s (540-790 km/h equivalent)
         else:
-            # Slow vehicles (traffic/slow drivers) - 5x faster
-            max_speed = random.uniform(10.0, 15.0) * 5.0  # m/s (180-270 km/h equivalent)
+            # Slow vehicles (traffic/slow drivers) - 10x faster
+            max_speed = random.uniform(10.0, 15.0) * 10.0  # m/s (360-540 km/h equivalent)
         
         max_acceleration = random.uniform(2.5, 4.0)  # m/s² (varied acceleration)
         max_deceleration = random.uniform(-4.0, -6.0)  # m/s² (varied braking)

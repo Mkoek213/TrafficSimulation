@@ -42,7 +42,7 @@ Examples:
     parser.add_argument('--frames', type=int, default=900,
                        help='Number of frames to simulate (default: 900 for 112.5 seconds at 8fps)')
     parser.add_argument('--fps', type=float, default=8.0,
-                       help='Frames per second (default: 8.0)')
+                       help='Frames per second / detections per second (default: 8.0 for 8 detections/second)')
     parser.add_argument('--time-step', type=float, default=0.1,
                        help='Simulation time step in seconds (default: 0.1)')
     parser.add_argument('--max-vehicles', type=int, default=150,

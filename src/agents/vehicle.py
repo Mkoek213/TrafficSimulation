@@ -12,6 +12,7 @@ import random
 from typing import Optional, List, Tuple, TYPE_CHECKING
 from ..utils.krauss_model import KraussModel
 from ..utils.mobil_model import MOBILModel
+from ..models.road_network import Point
 
 if TYPE_CHECKING:
     from ..models.traffic_model import TrafficSimulationModel
@@ -75,6 +76,8 @@ class Vehicle(mesa.Agent):
         self.desired_lane_change = None  # 'left', 'right', or None
         self.lane_change_timer = 0
         self.lane_change_duration = 2  # seconds
+        self.last_progress_printed = -1  # Track last printed progress percentage for debug
+        self._target_lane_id = None  # Target lane ID for non-adjacent lane changes
         
         # Car-following model
         self.krauss_model = KraussModel(
@@ -210,6 +213,22 @@ class Vehicle(mesa.Agent):
         if not current_lane or not target_lane:
             return False
         
+        # VERIFY: Check that the adjacent lane relationship is correct
+        # If vehicle wants to go LEFT, the target should be the LEFT lane
+        # If vehicle wants to go RIGHT, the target should be the RIGHT lane
+        expected_left = current_lane.left_lane_id
+        expected_right = current_lane.right_lane_id
+        
+        if direction == 'left' and target_lane_id != expected_left:
+            print(f"  ⚠ WARNING: Vehicle {self.unique_id} trying to go LEFT, but target_lane_id={target_lane_id} != left_lane_id={expected_left}")
+            print(f"     Current lane {self.lane_id}: left={expected_left}, right={expected_right}")
+            return False
+        
+        if direction == 'right' and target_lane_id != expected_right:
+            print(f"  ⚠ WARNING: Vehicle {self.unique_id} trying to go RIGHT, but target_lane_id={target_lane_id} != right_lane_id={expected_right}")
+            print(f"     Current lane {self.lane_id}: left={expected_left}, right={expected_right}")
+            return False
+        
         # Check if lanes have similar directions (dot product close to 1.0)
         # This ensures they're parallel and going the same way
         current_dir = current_lane.direction
@@ -220,6 +239,7 @@ class Vehicle(mesa.Agent):
         
         # Require lanes to be nearly parallel (dot product > 0.7 means angle < 45 degrees)
         if dot_product < 0.7:
+            print(f"  ⚠ WARNING: Vehicle {self.unique_id} on lane {self.lane_id} wants to change {direction} to lane {target_lane_id}, but lanes not parallel (dot={dot_product:.3f})")
             return False  # Lanes don't go in the same direction - cannot change lanes
         
         # Check basic safety: no vehicles too close
@@ -326,10 +346,12 @@ class Vehicle(mesa.Agent):
             direction: 'left' or 'right'
         """
         if self.can_change_lane(direction):
+            target_lane_id = self.model.get_adjacent_lane(self.lane_id, direction)
             self.desired_lane_change = direction
             self.is_changing_lanes = True
             self.lane_change_progress = 0.0
             self.lane_change_timer = 0
+            print(f"🔄 Vehicle {self.unique_id} STARTING lane change from lane {self.lane_id} to lane {target_lane_id} ({direction})")
     
     def update_lane_change(self, dt: float):
         """
@@ -353,16 +375,27 @@ class Vehicle(mesa.Agent):
     def complete_lane_change(self):
         """
         Complete the lane change maneuver.
+        Uses _target_lane_id if set (for non-adjacent lane changes), otherwise uses adjacent lane.
         """
         if self.desired_lane_change:
-            target_lane_id = self.model.get_adjacent_lane(self.lane_id, self.desired_lane_change)
+            # Check if we have a specific target lane (for non-adjacent lane changes)
+            if hasattr(self, '_target_lane_id') and self._target_lane_id is not None:
+                target_lane_id = self._target_lane_id
+            else:
+                # Use standard adjacent lane lookup
+                target_lane_id = self.model.get_adjacent_lane(self.lane_id, self.desired_lane_change)
+            
             if target_lane_id is not None:
+                old_lane_id = self.lane_id
                 self.lane_id = target_lane_id
+                print(f"✅ Vehicle {self.unique_id} COMPLETED lane change from lane {old_lane_id} to lane {target_lane_id} ({self.desired_lane_change})")
         
         self.is_changing_lanes = False
         self.desired_lane_change = None
         self.lane_change_progress = 0.0
         self.lane_change_timer = 0
+        self.last_progress_printed = -1  # Reset progress tracking
+        self._target_lane_id = None  # Clear target lane ID
     
     def step(self):
         """
@@ -400,15 +433,15 @@ class Vehicle(mesa.Agent):
         self.speed = next_speed
         
         # Ensure minimum speed to prevent complete stalling
-        # Minimum speeds multiplied by 5 for 5x faster movement
+        # Minimum speeds multiplied by 10 for 10x faster movement (much faster for demos)
         if distance_to_leader > 50.0 or leader is None:
-            self.speed = max(self.speed, 20.0 * 5.0)  # Minimum 100 m/s (360 km/h) - 5x faster
+            self.speed = max(self.speed, 20.0 * 10.0)  # Minimum 200 m/s (720 km/h) - 10x faster
         elif distance_to_leader > 20.0:
-            # Medium distance - maintain at least 75 m/s (270 km/h) - 5x faster
-            self.speed = max(self.speed, 15.0 * 5.0)
+            # Medium distance - maintain at least 150 m/s (540 km/h) - 10x faster
+            self.speed = max(self.speed, 15.0 * 10.0)
         elif distance_to_leader > 10.0:
-            # Close but not too close - maintain at least 50 m/s (180 km/h) - 5x faster
-            self.speed = max(self.speed, 10.0 * 5.0)
+            # Close but not too close - maintain at least 100 m/s (360 km/h) - 10x faster
+            self.speed = max(self.speed, 10.0 * 10.0)
         # If very close, let Krauss model handle it
         
         # Update position
@@ -428,14 +461,14 @@ class Vehicle(mesa.Agent):
             leader = self.get_leader()
             if leader and leader.speed > 0:
                 # Match leader's speed, but ensure minimum movement
-                # Minimum speeds multiplied by 5 for 5x faster movement
-                min_speed_lane2 = 8.0 * 5.0 if self.lane_id == 2 else 5.0 * 5.0
-                min_speed = min_speed_lane2 if self.lane_id == 2 else 5.0 * 5.0
+                # Minimum speeds multiplied by 10 for 10x faster movement
+                min_speed_lane2 = 8.0 * 10.0 if self.lane_id == 2 else 5.0 * 10.0
+                min_speed = min_speed_lane2 if self.lane_id == 2 else 5.0 * 10.0
                 self.speed = max(min_speed, min(self.speed, leader.speed * 0.95))
             else:
                 # Slow down but don't stop completely
-                # Minimum speeds multiplied by 5 for 5x faster movement
-                min_speed = 10.0 * 5.0 if self.lane_id == 2 else 8.0 * 5.0
+                # Minimum speeds multiplied by 10 for 10x faster movement
+                min_speed = 10.0 * 10.0 if self.lane_id == 2 else 8.0 * 10.0
                 self.speed = max(min_speed, self.speed * 0.85)
             
             # Still update position at reduced speed
@@ -449,36 +482,56 @@ class Vehicle(mesa.Agent):
         lane_length = self.model.get_lane_length(self.lane_id)
         if next_position >= lane_length:
             # Vehicle has reached end of lane - try to transition to connected lane
-            if not self._try_lane_transition():
-                # No direct connected lane available
-                # Check if there's an adjacent lane connection available (lane-changing connection)
-                # This indicates the end of an access lane, so vehicle should transition
-                if not self._try_adjacent_lane_transition():
-                    # No adjacent lane connection either
-                    # Only remove vehicle if the lane end is at the frame edge
-                    # Otherwise, vehicles at turning lanes should wait for space to transition
-                    if self.model.is_lane_end_at_frame_edge(self.lane_id):
-                        # Lane ends at frame edge - remove vehicle (it exits the simulation)
-                        self.position = lane_length
-                        self.speed = 0
-                        # Remove vehicle when it reaches the end of the lane
-                        if self.position >= lane_length - 0.1:  # Very close to end
-                            self.model.remove_vehicle(self)
-                            return  # Exit step early since vehicle is being removed
-                    else:
-                        # Lane ends but not at frame edge (e.g., turning lane)
-                        # Stop and wait - vehicle should transition to connected lane when space available
-                        self.position = lane_length
-                        self.speed = 0
-            else:
-                # Successfully transitioned to connected lane (turning lane)
-                self.position = next_position
+            transition_successful = False
+            
+            # CRITICAL: If lane ends at frame edge, vehicles should EXIT, not transition
+            # Only try transitions if lane does NOT end at frame edge
+            is_at_edge = self.model.is_lane_end_at_frame_edge(self.lane_id)
+            
+            if is_at_edge:
+                # Lane ends at frame edge - vehicles should exit, not transition
+                print(f"🚪 Vehicle {self.unique_id} reached end of lane {self.lane_id} at frame edge - removing (no transitions attempted)")
+                self.position = lane_length
+                self.speed = 0
+                self.model.remove_vehicle(self)
+                return  # Exit immediately
+            
+            # Lane does NOT end at edge - try transitions
+            # First, try direct connected lane transition (for turning lanes at intersections)
+            if self._try_lane_transition():
+                transition_successful = True
+                # Position is already set in _try_lane_transition() to 0.0
+            # If that fails, try adjacent lane transition (for lane-changing connections)
+            elif self._try_adjacent_lane_transition():
+                transition_successful = True
+                # Position is already set in _try_adjacent_lane_transition() to 0.0
+            # If that fails, try switching to adjacent lane if available (for access lanes)
+            elif self._try_switch_to_adjacent_lane():
+                transition_successful = True
+                # Position is already set in _try_switch_to_adjacent_lane()
+            
+            if not transition_successful:
+                # No transition possible - lane ends but not at edge (already checked above)
+                # Stop and wait for space (this should be rare)
+                print(f"  ⏸️  Vehicle {self.unique_id} stopping at end of lane {self.lane_id} (not at edge, no transition available)")
+                self.position = lane_length
+                self.speed = 0
+            # If transition was successful, position was already set in the transition method
         else:
             self.position = next_position
         
         # Lane-changing decision (only if not already changing lanes)
-        if not self.is_changing_lanes and random.random() < 0.1:  # Check occasionally
+        # Check every step for distance-based lane change detection
+        if not self.is_changing_lanes:
             self._consider_lane_change()
+        
+        # Debug: show lane change progress if in progress (every 25% progress)
+        if self.is_changing_lanes:
+            progress_pct = int(self.lane_change_progress * 100)
+            # Only print at 0%, 25%, 50%, 75% to avoid spam
+            if progress_pct != self.last_progress_printed and progress_pct % 25 == 0:
+                print(f"🔄 Vehicle {self.unique_id} lane change in progress: {progress_pct}% ({self.desired_lane_change})")
+                self.last_progress_printed = progress_pct
     
     def _try_lane_transition(self) -> bool:
         """
@@ -538,6 +591,7 @@ class Vehicle(mesa.Agent):
     def _choose_next_lane_by_route(self, current_lane) -> Optional[int]:
         """
         Choose the next lane based on desired route type.
+        Skips connection lanes and goes directly to target lanes.
         
         Args:
             current_lane: Current lane object
@@ -548,21 +602,37 @@ class Vehicle(mesa.Agent):
         if not current_lane.connected_lanes:
             return None
         
+        # Helper function to resolve connection lanes to their target lanes
+        def resolve_lane(lane_id: int) -> int:
+            """If lane_id is a connection lane, return its target. Otherwise return lane_id."""
+            lane = self.model.road_network.get_lane(lane_id)
+            if lane and lane.is_lane_change_connection and lane.target_lane_id is not None:
+                return lane.target_lane_id
+            return lane_id
+        
         # Find lane matching desired route type
         for connected_lane_id in current_lane.connected_lanes:
             route_type = current_lane.route_types.get(connected_lane_id, 'straight')
             if route_type == self.route_type:
-                return connected_lane_id
+                # Resolve connection lane to target lane if needed
+                resolved_lane_id = resolve_lane(connected_lane_id)
+                return resolved_lane_id
         
         # If exact match not found, prefer straight, then right, then left
         for preferred_type in ['straight', 'right', 'left']:
             for connected_lane_id in current_lane.connected_lanes:
                 route_type = current_lane.route_types.get(connected_lane_id, 'straight')
                 if route_type == preferred_type:
-                    return connected_lane_id
+                    # Resolve connection lane to target lane if needed
+                    resolved_lane_id = resolve_lane(connected_lane_id)
+                    return resolved_lane_id
         
-        # Fallback to first available
-        return current_lane.connected_lanes[0] if current_lane.connected_lanes else None
+        # Fallback to first available (resolve connection lane if needed)
+        if current_lane.connected_lanes:
+            resolved_lane_id = resolve_lane(current_lane.connected_lanes[0])
+            return resolved_lane_id
+        
+        return None
     
     def _try_adjacent_lane_transition(self) -> bool:
         """
@@ -608,30 +678,270 @@ class Vehicle(mesa.Agent):
         
         return False
     
+    def _try_switch_to_adjacent_lane(self) -> bool:
+        """
+        Try to switch to an adjacent lane when current lane ends.
+        This is used for access lanes that end but have adjacent lanes available.
+        Now has 50% probability to attempt adjacent lane switch.
+        
+        Returns:
+            True if switch successful, False otherwise
+        """
+        # 50% chance to try adjacent lane switch (instead of always trying)
+        if random.random() < 0.5:
+            print(f"🚗 Vehicle {self.unique_id} attempting adjacent lane switch from lane {self.lane_id} (50% chance)")
+        else:
+            print(f"⏭️  Vehicle {self.unique_id} skipping adjacent lane switch from lane {self.lane_id} (50% chance)")
+            return False
+        
+        current_lane = self.model.road_network.get_lane(self.lane_id)
+        if not current_lane:
+            return False
+        
+        # Try both left and right adjacent lanes
+        for direction in ['left', 'right']:
+            adjacent_lane_id = self.model.get_adjacent_lane(self.lane_id, direction)
+            if adjacent_lane_id is None:
+                continue
+            
+            adjacent_lane = self.model.road_network.get_lane(adjacent_lane_id)
+            if not adjacent_lane:
+                continue
+            
+            # Check if adjacent lane goes in similar direction (parallel lanes)
+            current_dir = current_lane.direction
+            adjacent_dir = adjacent_lane.direction
+            
+            # Calculate dot product to check if lanes are parallel
+            dot_product = current_dir[0] * adjacent_dir[0] + current_dir[1] * adjacent_dir[1]
+            if dot_product < 0.7:  # Not parallel enough
+                print(f"  ⚠ Vehicle {self.unique_id}: Lane {adjacent_lane_id} not parallel enough (dot={dot_product:.2f})")
+                continue
+            
+            # Find position on adjacent lane that corresponds to end of current lane
+            # Use the end point of current lane to find closest point on adjacent lane
+            current_end_point = current_lane.get_position_at_distance(self.model.get_lane_length(self.lane_id))
+            adjacent_position = adjacent_lane.get_distance_from_start(current_end_point)
+            
+            # Check if there's space around that position on adjacent lane
+            adjacent_lane_vehicles = self.model.get_vehicles_in_lane(adjacent_lane_id)
+            min_gap = 30.0  # Need at least 30m gap
+            has_space = True
+            
+            for vehicle in adjacent_lane_vehicles:
+                distance = abs(vehicle.position - adjacent_position)
+                if distance < min_gap:
+                    has_space = False
+                    print(f"  ⚠ Vehicle {self.unique_id}: Not enough space on lane {adjacent_lane_id} (gap={distance:.1f}m < {min_gap}m)")
+                    break
+            
+            if has_space:
+                # Switch to adjacent lane
+                old_lane_id = self.lane_id
+                self.lane_id = adjacent_lane_id
+                self.position = adjacent_position
+                
+                print(f"✅ Vehicle {self.unique_id} switched from lane {old_lane_id} to adjacent lane {adjacent_lane_id} at position {adjacent_position:.1f}m")
+                return True
+            else:
+                print(f"  ❌ Vehicle {self.unique_id}: Failed to switch to lane {adjacent_lane_id} ({direction}) - no space")
+        
+        print(f"  ❌ Vehicle {self.unique_id}: No suitable adjacent lane found")
+        return False
+    
     def _consider_lane_change(self):
         """
-        Consider whether to change lanes using MOBIL model.
-        Also considers if lane change is needed for route planning.
+        Consider whether to change lanes using distance-based detection.
+        Uses combined line functions for each lane and checks distance from point to line.
+        Checks ALL lanes in the network, not just predefined adjacent lanes.
+        This allows lane changes between lanes that are spatially close (e.g., lane 1 to lane 8)
+        even if they don't have a direct adjacent relationship.
+        For now, all cars change lanes if they can.
         """
-        # Don't change lanes if already changing or close to intersection
-        lane_length = self.model.get_lane_length(self.lane_id)
-        distance_to_end = lane_length - self.position
-        
-        # If close to intersection, prioritize getting into correct lane for route
-        if distance_to_end < 100:  # Within 100m of intersection
-            self._lane_change_for_route()
+        if self.is_changing_lanes:
             return
         
-        # Otherwise, consider lane change for speed/flow
-        # Check left lane
-        if self.can_change_lane('left'):
+        # Get vehicle's current world position
+        current_lane = self.model.road_network.get_lane(self.lane_id)
+        if not current_lane:
+            return
+        
+        vehicle_point = current_lane.get_position_at_distance(self.position)
+        current_dir = current_lane.direction
+        
+        # Check ALL lanes in the network to find spatially close lanes
+        # This allows lane changes even if lanes aren't marked as adjacent
+        candidate_lanes = []
+        lane_width = current_lane.lane_width if current_lane.lane_width else 3.5
+        lane_change_threshold = lane_width * 3.0  # 3x lane width threshold for all lanes
+        
+        # Loop through all lanes in the network
+        for lane_id, lane in self.model.road_network.all_lanes.items():
+            # Skip current lane
+            if lane_id == self.lane_id:
+                continue
+            
+            # Check if lane goes in similar direction (parallel lanes)
+            target_dir = lane.direction
+            dot_product = current_dir[0] * target_dir[0] + current_dir[1] * target_dir[1]
+            
+            # Require lanes to be nearly parallel (dot product > 0.7 means angle < 45 degrees)
+            if dot_product < 0.7:
+                continue  # Lanes don't go in the same direction - skip
+            
+            # Calculate distance from vehicle point to this lane's centerline
+            distance = lane.distance_to_centerline(vehicle_point)
+            
+            # If within threshold, this is a candidate for lane change
+            if distance <= lane_change_threshold:
+                # Determine direction (left or right) based on relative position
+                # We can approximate this by checking which side of the current lane the target lane is on
+                # For simplicity, we'll try both directions and let can_change_lane_with_target decide
+                candidate_lanes.append((lane_id, lane, distance))
+        
+        # Sort candidates by distance (closest first)
+        candidate_lanes.sort(key=lambda x: x[2])
+        
+        # Try to change to the closest lane
+        for lane_id, lane, distance in candidate_lanes:
+            # Determine direction by checking if we can change to this lane
+            # Try to determine direction by checking adjacent lanes first
+            left_lane_id = self.model.get_adjacent_lane(self.lane_id, 'left')
+            right_lane_id = self.model.get_adjacent_lane(self.lane_id, 'right')
+            
+            # Determine direction: if target lane is on the left side, go left; otherwise right
+            # We can approximate this by checking the cross product or relative position
+            # For now, try both directions if we have adjacent lanes, or guess based on lane ID
+            direction = None
+            
+            # If we have predefined adjacent lanes, check if target matches
+            if left_lane_id == lane_id:
+                direction = 'left'
+            elif right_lane_id == lane_id:
+                direction = 'right'
+            else:
+                # No predefined relationship - determine direction based on spatial position
+                # Calculate perpendicular vector to current lane direction
+                perp_x = -current_dir[1]
+                perp_y = current_dir[0]
+                
+                # Get a point on the target lane near our position
+                target_point = lane.get_position_at_distance(
+                    lane.get_distance_from_start(vehicle_point)
+                )
+                
+                # Vector from current position to target lane
+                to_target = Point(target_point.x - vehicle_point.x, target_point.y - vehicle_point.y)
+                
+                # Dot product with perpendicular gives us which side
+                side = perp_x * to_target.x + perp_y * to_target.y
+                
+                if side > 0:
+                    direction = 'left'  # Target is on the left side
+                else:
+                    direction = 'right'  # Target is on the right side
+            
+            # Try to change to this lane using a modified can_change_lane that accepts target lane
+            if direction and self._can_change_lane_to_target(lane_id, direction):
+                print(f"🚗 Vehicle {self.unique_id} detected lane {lane_id} ({direction}) at distance {distance:.2f}m - initiating lane change")
+                self._start_lane_change_to_target(lane_id, direction)
+                return
+        
+        # Fallback: try predefined adjacent lanes if no spatial candidates found
+        left_lane_id = self.model.get_adjacent_lane(self.lane_id, 'left')
+        right_lane_id = self.model.get_adjacent_lane(self.lane_id, 'right')
+        
+        if left_lane_id is not None and self.can_change_lane('left'):
+            print(f"🚗 Vehicle {self.unique_id} attempting lane change LEFT from lane {self.lane_id}")
             self.start_lane_change('left')
             return
         
-        # Check right lane
-        if self.can_change_lane('right'):
+        if right_lane_id is not None and self.can_change_lane('right'):
+            print(f"🚗 Vehicle {self.unique_id} attempting lane change RIGHT from lane {self.lane_id}")
             self.start_lane_change('right')
             return
+    
+    def _can_change_lane_to_target(self, target_lane_id: int, direction: str) -> bool:
+        """
+        Check if the vehicle can safely change lanes to a specific target lane.
+        This is similar to can_change_lane but accepts a specific target lane ID.
+        
+        Args:
+            target_lane_id: ID of the target lane
+            direction: 'left' or 'right' (for display purposes)
+            
+        Returns:
+            True if lane change is safe, False otherwise
+        """
+        if self.is_changing_lanes:
+            return False
+        
+        current_lane = self.model.road_network.get_lane(self.lane_id)
+        target_lane = self.model.road_network.get_lane(target_lane_id)
+        
+        if not current_lane or not target_lane:
+            return False
+        
+        # Check if lanes have similar directions (dot product close to 1.0)
+        current_dir = current_lane.direction
+        target_dir = target_lane.direction
+        
+        dot_product = current_dir[0] * target_dir[0] + current_dir[1] * target_dir[1]
+        
+        if dot_product < 0.7:
+            return False  # Lanes don't go in the same direction
+        
+        # Check basic safety: no vehicles too close in target lane
+        target_lane_vehicles = self.model.get_vehicles_in_lane(target_lane_id)
+        
+        safe_gap_ahead = 30.0  # meters
+        safe_gap_behind = 25.0  # meters
+        
+        for vehicle in target_lane_vehicles:
+            distance = vehicle.position - self.position
+            if distance > 0 and distance < safe_gap_ahead:  # Ahead and too close
+                return False
+            if distance < 0 and abs(distance) < safe_gap_behind:  # Behind and too close
+                return False
+        
+        return True
+    
+    def _start_lane_change_to_target(self, target_lane_id: int, direction: str):
+        """
+        Start a lane change maneuver to a specific target lane.
+        
+        Args:
+            target_lane_id: ID of the target lane
+            direction: 'left' or 'right'
+        """
+        if self._can_change_lane_to_target(target_lane_id, direction):
+            # Temporarily set the target lane as adjacent so start_lane_change works
+            # We'll override the lane change completion to use our target lane
+            current_lane = self.model.road_network.get_lane(self.lane_id)
+            if current_lane:
+                # Temporarily modify adjacent lane to match target
+                original_left = current_lane.left_lane_id
+                original_right = current_lane.right_lane_id
+                
+                if direction == 'left':
+                    current_lane.left_lane_id = target_lane_id
+                else:
+                    current_lane.right_lane_id = target_lane_id
+                
+                # Start the lane change
+                self.desired_lane_change = direction
+                self.is_changing_lanes = True
+                self.lane_change_progress = 0.0
+                self.lane_change_timer = 0
+                
+                # Store target lane ID for completion
+                self._target_lane_id = target_lane_id
+                
+                # Restore original adjacent lanes
+                current_lane.left_lane_id = original_left
+                current_lane.right_lane_id = original_right
+                
+                print(f"🔄 Vehicle {self.unique_id} STARTING lane change from lane {self.lane_id} to lane {target_lane_id} ({direction})")
     
     def _lane_change_for_route(self):
         """
@@ -789,7 +1099,13 @@ class Vehicle(mesa.Agent):
         # If changing lanes, interpolate between current and target lane centerlines
         # This is the ONLY way vehicles can be between lanes
         if self.is_changing_lanes and self.desired_lane_change:
-            target_lane_id = self.model.get_adjacent_lane(self.lane_id, self.desired_lane_change)
+            # Check if we have a specific target lane (for non-adjacent lane changes)
+            if hasattr(self, '_target_lane_id') and self._target_lane_id is not None:
+                target_lane_id = self._target_lane_id
+            else:
+                # Use standard adjacent lane lookup
+                target_lane_id = self.model.get_adjacent_lane(self.lane_id, self.desired_lane_change)
+            
             if target_lane_id is not None:
                 target_lane = self.model.road_network.get_lane(target_lane_id)
                 if target_lane:
@@ -820,7 +1136,13 @@ class Vehicle(mesa.Agent):
         """
         # If changing lanes, interpolate between current and target lane angles
         if self.is_changing_lanes and self.desired_lane_change:
-            target_lane_id = self.model.get_adjacent_lane(self.lane_id, self.desired_lane_change)
+            # Check if we have a specific target lane (for non-adjacent lane changes)
+            if hasattr(self, '_target_lane_id') and self._target_lane_id is not None:
+                target_lane_id = self._target_lane_id
+            else:
+                # Use standard adjacent lane lookup
+                target_lane_id = self.model.get_adjacent_lane(self.lane_id, self.desired_lane_change)
+            
             if target_lane_id is not None:
                 # Get direction at current position for both lanes
                 current_lane_dir = self.model.get_lane_direction(self.lane_id, self.position)

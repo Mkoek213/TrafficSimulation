@@ -179,7 +179,7 @@ class SimulationToCSVConverter:
         Args:
             output_path: Path to output CSV file
             num_frames: Number of frames to simulate
-            frames_per_second: Target frames per second
+            frames_per_second: Target frames per second (default: 8.0 for 8 detections/second)
             dt_per_frame: Time step per frame (if None, uses model.time_step)
         """
         if dt_per_frame is None:
@@ -188,9 +188,16 @@ class SimulationToCSVConverter:
         # Now dt_per_frame is guaranteed to be float
         dt_per_frame_float: float = dt_per_frame
         
-        # Always use 1 step per frame (generate coordinates once per frame)
-        # This ensures each frame has one position update
-        steps_per_frame = 1
+        # Calculate steps per frame to achieve target FPS
+        # If fps = 8, time per frame = 1/8 = 0.125 seconds
+        # If time_step = 0.1, steps_per_frame = 0.125 / 0.1 = 1.25
+        # Round to nearest integer
+        time_per_frame = 1.0 / frames_per_second
+        steps_per_frame = max(1, round(time_per_frame / dt_per_frame_float))
+        
+        print(f"  Target FPS: {frames_per_second} (time per frame: {time_per_frame:.3f}s)")
+        print(f"  Simulation time_step: {dt_per_frame_float}s")
+        print(f"  Steps per frame: {steps_per_frame} (actual FPS: {1.0/(steps_per_frame * dt_per_frame_float):.2f})")
         
         all_frames_data = []
         

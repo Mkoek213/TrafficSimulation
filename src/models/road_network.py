@@ -359,6 +359,65 @@ class Lane:
         
         return 0.0
     
+    def distance_to_centerline(self, point: Point) -> float:
+        """
+        Calculate the minimum distance from a point to this lane's centerline.
+        This creates a "combined line function" representation of the lane.
+        
+        Args:
+            point: Point to measure distance from
+            
+        Returns:
+            Minimum distance to the centerline (meters)
+        """
+        if self.centerline_points and len(self.centerline_points) >= 2:
+            # Find minimum distance to any segment of the centerline
+            min_dist = float('inf')
+            
+            for i in range(len(self.centerline_points) - 1):
+                p1 = self.centerline_points[i]
+                p2 = self.centerline_points[i + 1]
+                seg_length = p1.distance_to(p2)
+                
+                if seg_length == 0:
+                    # Zero-length segment, just use distance to point
+                    dist = point.distance_to(p1)
+                    min_dist = min(min_dist, dist)
+                    continue
+                
+                # Project point onto this segment
+                seg_vec = Point(p2.x - p1.x, p2.y - p1.y)
+                point_vec = Point(point.x - p1.x, point.y - p1.y)
+                
+                t = (seg_vec.x * point_vec.x + seg_vec.y * point_vec.y) / (seg_length * seg_length)
+                t = max(0, min(1, t))  # Clamp to segment
+                
+                # Closest point on segment
+                closest = Point(
+                    p1.x + t * seg_vec.x,
+                    p1.y + t * seg_vec.y
+                )
+                
+                dist_to_seg = point.distance_to(closest)
+                min_dist = min(min_dist, dist_to_seg)
+            
+            return min_dist
+        
+        # Fallback: project onto straight line
+        lane_vector = Point(self.end_point.x - self.start_point.x, self.end_point.y - self.start_point.y)
+        point_vector = Point(point.x - self.start_point.x, point.y - self.start_point.y)
+        
+        if self.length > 0:
+            t = (lane_vector.x * point_vector.x + lane_vector.y * point_vector.y) / (self.length * self.length)
+            t = max(0, min(1, t))
+            closest_point = Point(
+                self.start_point.x + t * lane_vector.x,
+                self.start_point.y + t * lane_vector.y
+            )
+            return point.distance_to(closest_point)
+        
+        return point.distance_to(self.start_point)
+    
     def snap_point_to_centerline(self, point: Point) -> Point:
         """
         Snap a point to the nearest point on this lane's centerline.
@@ -416,6 +475,54 @@ class Lane:
             )
         
         return self.start_point
+    
+    def point_lies_on_lane(self, point: Point, tolerance: float = 10.0) -> bool:
+        """
+        Check if a point lies on this lane's centerline (within tolerance).
+        Uses interpolation to check if point is on any segment of the centerline.
+        
+        Args:
+            point: Point to check
+            tolerance: Maximum distance from centerline to consider point as "on" the lane (meters)
+            
+        Returns:
+            True if point lies on the lane centerline within tolerance, False otherwise
+        """
+        if not self.centerline_points or len(self.centerline_points) < 2:
+            # Fallback to straight line check
+            snapped = self.snap_point_to_centerline(point)
+            return point.distance_to(snapped) <= tolerance
+        
+        # Check all segments of the centerline
+        for i in range(len(self.centerline_points) - 1):
+            p1 = self.centerline_points[i]
+            p2 = self.centerline_points[i + 1]
+            seg_length = p1.distance_to(p2)
+            
+            if seg_length == 0:
+                # Zero-length segment, just check distance to point
+                if point.distance_to(p1) <= tolerance:
+                    return True
+                continue
+            
+            # Project point onto this segment
+            seg_vec = Point(p2.x - p1.x, p2.y - p1.y)
+            point_vec = Point(point.x - p1.x, point.y - p1.y)
+            
+            t = (seg_vec.x * point_vec.x + seg_vec.y * point_vec.y) / (seg_length * seg_length)
+            t = max(0, min(1, t))  # Clamp to segment
+            
+            # Closest point on segment
+            closest = Point(
+                p1.x + t * seg_vec.x,
+                p1.y + t * seg_vec.y
+            )
+            
+            dist_to_seg = point.distance_to(closest)
+            if dist_to_seg <= tolerance:
+                return True
+        
+        return False
     
     def set_adjacent_lanes(self, left_lane_id: Optional[int] = None, 
                           right_lane_id: Optional[int] = None):
@@ -702,6 +809,32 @@ class RoadNetwork:
             return lane.right_lane_id
         
         return None
+    
+    def find_lane_for_point(self, point: Point, tolerance: float = 10.0) -> Optional[int]:
+        """
+        Find which lane a point belongs to by checking if it lies on any lane's centerline.
+        Uses interpolation to check all lane segments.
+        
+        Args:
+            point: Point to check (in world coordinates)
+            tolerance: Maximum distance from centerline to consider point as "on" the lane (meters)
+            
+        Returns:
+            Lane ID if point lies on a lane, None otherwise
+        """
+        best_lane_id = None
+        min_distance = float('inf')
+        
+        for lane_id, lane in self.all_lanes.items():
+            if lane.point_lies_on_lane(point, tolerance):
+                # Point lies on this lane, check distance to be sure
+                snapped = lane.snap_point_to_centerline(point)
+                dist = point.distance_to(snapped)
+                if dist < min_distance:
+                    min_distance = dist
+                    best_lane_id = lane_id
+        
+        return best_lane_id
     
     def get_lane_length(self, lane_id: int) -> float:
         """
