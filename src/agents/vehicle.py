@@ -419,7 +419,7 @@ class Vehicle(mesa.Agent):
             other_world_x, other_world_y = vehicle.get_visual_position()
             other_angle = vehicle.get_visual_angle()
             center_dist = np.sqrt((new_world_x - other_world_x)**2 + (new_world_y - other_world_y)**2)
-            min_center_gap = (self.length + vehicle.length) / 2 + 6.0  # Require at least ~6m buffer beyond vehicle bodies
+            min_center_gap = (self.length + vehicle.length) / 2 + 36.0  # Six-times larger buffer beyond vehicle bodies
             if center_dist < min_center_gap:
                 return True
             
@@ -457,8 +457,8 @@ class Vehicle(mesa.Agent):
         max_extent1 = np.sqrt((l1/2)**2 + (w1/2)**2)
         max_extent2 = np.sqrt((l2/2)**2 + (w2/2)**2)
         
-        # Safety margin to prevent bounding box collisions - increased to prevent overlap
-        safety_margin = 5.0  # meters - generous buffer so vehicles keep distance
+        # Safety margin to prevent bounding box collisions - expanded for wider spacing
+        safety_margin = 30.0  # meters
         
         # If distance between centers is less than sum of extents + safety margin, collision
         if center_dist < max_extent1 + max_extent2 + safety_margin:
