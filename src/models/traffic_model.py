@@ -1264,35 +1264,24 @@ class TrafficSimulationModel(mesa.Model):
         lane_dir = lane.get_direction_at_distance(0.0) if lane.centerline_points else lane.direction
         spawn_angle = np.arctan2(lane_dir[1], lane_dir[0])
         
-        # Check against all existing vehicles in the same lane
-        existing_vehicles = self.get_vehicles_in_lane(lane_id)
-        
-        # Typical vehicle dimensions
+        # Check against all existing vehicles (any lane)
         vehicle_length = 4.5
         vehicle_width = 2.0
+        spawn_max_extent = np.sqrt((vehicle_length/2)**2 + (vehicle_width/2)**2)
+        safety_margin = 15.0  # Large margin so new spawns respect bigger gaps
         
-        for vehicle in existing_vehicles:
-            # Only check vehicles very close to spawn position (within 50m)
-            if vehicle.position > 50.0:
-                continue  # Too far away, no collision possible
-            
-            # Get vehicle position and angle
+        for vehicle in self.vehicles:
             veh_x, veh_y = vehicle.get_visual_position()
-            veh_angle = vehicle.get_visual_angle()
-            
-            # Check bounding box overlap using the same method as vehicle collision detection
             center_dist = np.sqrt((spawn_x - veh_x)**2 + (spawn_y - veh_y)**2)
             
-            # Calculate maximum extent (half-diagonal) of each box
-            max_extent1 = np.sqrt((vehicle_length/2)**2 + (vehicle_width/2)**2)
-            max_extent2 = np.sqrt((vehicle.length/2)**2 + (vehicle.width/2)**2)
+            # Ignore vehicles far away
+            if center_dist > 120.0:
+                continue
             
-            # Safety margin to prevent bounding box collisions - increased for spawns
-            safety_margin = 5.0  # Large margin to prevent any overlap at spawn
-            
-            # If distance between centers is less than sum of extents + safety margin, overlap detected
-            if center_dist < max_extent1 + max_extent2 + safety_margin:
-                return False  # Overlap detected, position not safe
+            vehicle_extent = np.sqrt((vehicle.length/2)**2 + (vehicle.width/2)**2)
+            min_allowed = spawn_max_extent + vehicle_extent + safety_margin
+            if center_dist < min_allowed:
+                return False
         
         return True  # No overlap, position is safe
     

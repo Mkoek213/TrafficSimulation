@@ -47,8 +47,9 @@ class CenterlineMarkerUI:
         
         # Current state
         self.mode = 'draw'  # 'draw', 'spawn', 'connect'
-        self.current_lane_id = len(self.lanes_data.get('lanes', []))
+        self.current_lane_id = self._get_next_lane_id()
         self.current_lane: List[Tuple[int, int]] = []
+        self.editing_lane_id: Optional[int] = None
         self.selected_lane_id: Optional[int] = None
         self.connection_source_lane_id: Optional[int] = None
         self.connection_source_point: Optional[Tuple[int, int]] = None
@@ -78,20 +79,17 @@ class CenterlineMarkerUI:
         self._redraw()
     
     def _load_existing_lanes(self) -> Dict:
-        """Load existing lanes from JSON file if it exists, but start fresh."""
-        # Always start with a fresh structure - ignore existing lanes
-        # We only preserve metadata like image_path, image_width, image_height
+        """Load existing lanes from JSON file if it exists."""
         if Path(self.output_path).exists():
             with open(self.output_path, 'r') as f:
                 data = json.load(f)
-                # Keep only metadata, clear lanes and connections
-                return {
-                    'image_path': data.get('image_path', self.image_path),
-                    'image_width': data.get('image_width', self.width),
-                    'image_height': data.get('image_height', self.height),
-                    'lanes': [],  # Start fresh - no existing lanes
-                    'lane_connections': []  # Start fresh - no existing connections
-                }
+                # Ensure required keys exist
+                data.setdefault('lanes', [])
+                data.setdefault('lane_connections', [])
+                data.setdefault('image_path', self.image_path)
+                data.setdefault('image_width', self.width)
+                data.setdefault('image_height', self.height)
+                return data
         else:
             # Create new structure
             return {
@@ -101,6 +99,13 @@ class CenterlineMarkerUI:
                 'lanes': [],
                 'lane_connections': []  # For lane-changing paths
             }
+
+    def _get_next_lane_id(self) -> int:
+        """Calculate the next available lane ID."""
+        lanes = self.lanes_data.get('lanes', [])
+        if not lanes:
+            return 0
+        return max(lane.get('lane_id', -1) for lane in lanes) + 1
     
     def _print_instructions(self):
         """Print instructions for the user."""
@@ -114,6 +119,7 @@ class CenterlineMarkerUI:
         print("    - 's': SAVE current centerline")
         print("    - 'd': Delete current centerline")
         print("    - 'u': UNDO last point")
+        print("    - 'e': Extend selected lane (load its points for editing)")
         print("    - '1-9, 0': Select lane by number")
         print("")
         print("  SPAWN MODE ('t' key):")
@@ -572,6 +578,25 @@ class CenterlineMarkerUI:
             print("⚠ Need at least 2 points to save a lane")
             return
         
+        if self.editing_lane_id is not None:
+            lane = self._get_lane_by_id(self.editing_lane_id)
+            if lane:
+                lane['centerline_points'] = self.current_lane.copy()
+                lane['num_points'] = len(self.current_lane)
+                print(f"✓ Updated lane {self.editing_lane_id} with {len(self.current_lane)} centerline points")
+            else:
+                print(f"⚠ Could not find lane {self.editing_lane_id} to update; creating new lane instead")
+                self._save_new_lane()
+            self.editing_lane_id = None
+        else:
+            self._save_new_lane()
+        
+        self.current_lane = []
+        self.current_lane_id = self._get_next_lane_id()
+        self._redraw()
+
+    def _save_new_lane(self):
+        """Helper to save current points as a new lane."""
         lane_id = self.current_lane_id
         lane_data = {
             'lane_id': lane_id,
@@ -583,10 +608,6 @@ class CenterlineMarkerUI:
         
         self.lanes_data['lanes'].append(lane_data)
         print(f"✓ Saved lane {lane_id} with {len(self.current_lane)} centerline points")
-        
-        self.current_lane_id += 1
-        self.current_lane = []
-        self._redraw()
     
     def _finish_connection(self):
         """Finish the current connection."""
@@ -657,6 +678,27 @@ class CenterlineMarkerUI:
         else:
             print(f"⚠ Lane index {lane_idx} out of range (available: {len(lanes)} lanes)")
     
+    def _start_extend_selected_lane(self):
+        """Load selected lane into current lane for extension/editing."""
+        if self.mode != 'draw':
+            print("⚠ Extension is only available in DRAW mode")
+            return
+        if self.selected_lane_id is None:
+            print("⚠ Please select a lane to extend (press number key)")
+            return
+        lane = self._get_lane_by_id(self.selected_lane_id)
+        if not lane:
+            print(f"⚠ Lane {self.selected_lane_id} not found")
+            return
+        points = lane.get('centerline_points', [])
+        if len(points) < 2:
+            print(f"⚠ Lane {self.selected_lane_id} does not have enough points to edit")
+            return
+        self.current_lane = [tuple(pt) for pt in points]
+        self.editing_lane_id = self.selected_lane_id
+        print(f"✓ Loaded lane {self.selected_lane_id} for editing. Add points and press 's' to save")
+        self._redraw()
+    
     def _save_to_file(self):
         """Save all data to JSON file."""
         # Ensure image_path is relative
@@ -725,6 +767,9 @@ class CenterlineMarkerUI:
             elif key == ord('t') and self.mode == 'spawn':
                 # Toggle spawn point
                 self._toggle_spawn()
+            elif key == ord('e') and self.mode == 'draw':
+                # Extend selected lane
+                self._start_extend_selected_lane()
             elif key == 13 and self.mode == 'connect':  # ENTER key
                 # Finish connection
                 self._finish_connection()
