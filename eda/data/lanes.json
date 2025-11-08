@@ -29,7 +29,17 @@
         ]
       ],
       "spawn_enabled": true,
-      "num_points": 5
+      "num_points": 5,
+      "traffic_lights": [
+        {
+          "position": [
+            1813,
+            1228
+          ],
+          "state": "red",
+          "cycle_time": 30
+        }
+      ]
     },
     {
       "lane_id": 1,
@@ -49,7 +59,17 @@
         ]
       ],
       "spawn_enabled": true,
-      "num_points": 3
+      "num_points": 3,
+      "traffic_lights": [
+        {
+          "position": [
+            1813,
+            1199
+          ],
+          "state": "red",
+          "cycle_time": 30
+        }
+      ]
     },
     {
       "lane_id": 2,
@@ -117,7 +137,17 @@
         ]
       ],
       "spawn_enabled": true,
-      "num_points": 15
+      "num_points": 15,
+      "traffic_lights": [
+        {
+          "position": [
+            1813,
+            1157
+          ],
+          "state": "red",
+          "cycle_time": 30
+        }
+      ]
     },
     {
       "lane_id": 3,
@@ -133,7 +163,17 @@
         ]
       ],
       "spawn_enabled": true,
-      "num_points": 2
+      "num_points": 2,
+      "traffic_lights": [
+        {
+          "position": [
+            2128,
+            1124
+          ],
+          "state": "red",
+          "cycle_time": 30
+        }
+      ]
     },
     {
       "lane_id": 4,
@@ -169,7 +209,17 @@
         ]
       ],
       "spawn_enabled": true,
-      "num_points": 7
+      "num_points": 7,
+      "traffic_lights": [
+        {
+          "position": [
+            2128,
+            1132
+          ],
+          "state": "red",
+          "cycle_time": 30
+        }
+      ]
     },
     {
       "lane_id": 5,
@@ -185,7 +235,17 @@
         ]
       ],
       "spawn_enabled": true,
-      "num_points": 2
+      "num_points": 2,
+      "traffic_lights": [
+        {
+          "position": [
+            2128,
+            1095
+          ],
+          "state": "red",
+          "cycle_time": 30
+        }
+      ]
     },
     {
       "lane_id": 6,
@@ -225,7 +285,17 @@
         ]
       ],
       "spawn_enabled": true,
-      "num_points": 8
+      "num_points": 8,
+      "traffic_lights": [
+        {
+          "position": [
+            2228,
+            1033
+          ],
+          "state": "red",
+          "cycle_time": 30
+        }
+      ]
     },
     {
       "lane_id": 7,
@@ -281,7 +351,17 @@
         ]
       ],
       "spawn_enabled": true,
-      "num_points": 12
+      "num_points": 12,
+      "traffic_lights": [
+        {
+          "position": [
+            1900,
+            933
+          ],
+          "state": "red",
+          "cycle_time": 30
+        }
+      ]
     },
     {
       "lane_id": 8,
@@ -340,14 +420,18 @@
           1241
         ]
       ],
-      "traffic_lights": [
-        [
-          1973,
-          940
-        ]
-      ],
       "spawn_enabled": true,
-      "num_points": 13
+      "num_points": 13,
+      "traffic_lights": [
+        {
+          "position": [
+            1970,
+            950
+          ],
+          "state": "red",
+          "cycle_time": 30
+        }
+      ]
     },
     {
       "lane_id": 9,
@@ -411,7 +495,17 @@
         ]
       ],
       "spawn_enabled": true,
-      "num_points": 14
+      "num_points": 14,
+      "traffic_lights": [
+        {
+          "position": [
+            2012,
+            954
+          ],
+          "state": "red",
+          "cycle_time": 30
+        }
+      ]
     }
   ],
   "lane_connections": [
