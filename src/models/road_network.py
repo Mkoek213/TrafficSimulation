@@ -53,7 +53,8 @@ class Lane:
                  end_point: Point,
                  speed_limit: float = 30.0,  # m/s
                  lane_width: float = 3.5,   # meters
-                 centerline_points: Optional[List[Point]] = None):  # Optional centerline path points
+                 centerline_points: Optional[List[Point]] = None, # Optional centerline path points
+                 traffic_lights: Optional[List[Point]] = None):  
         """
         Initialize a lane.
         
@@ -64,6 +65,7 @@ class Lane:
             speed_limit: Speed limit for the lane (m/s)
             lane_width: Width of the lane (meters)
             centerline_points: Optional list of centerline points for vehicles to follow exactly
+            traffic_lights: Optional list of traffic lights points for vehicles to stop in front of
         """
         self.lane_id = lane_id
         self.start_point = start_point
@@ -71,6 +73,7 @@ class Lane:
         self.speed_limit = speed_limit
         self.lane_width = lane_width
         self.centerline_points = centerline_points if centerline_points else []
+        self.traffic_lights = traffic_lights if traffic_lights else []
         
         # Lane-changing connection metadata (for special transition lanes)
         self.source_lane_id: Optional[int] = None

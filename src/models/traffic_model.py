@@ -506,6 +506,14 @@ class TrafficSimulationModel(mesa.Model):
             # Determine start and end points (first and last centerline points)
             start_point = centerline_world_points[0]
             end_point = centerline_world_points[-1]
+
+            # Prepare traffic lights
+            points = lane_info.get('traffic_lights', [])
+
+            # Convert points to world coordinates
+            traffic_lights_world_points = []
+            for px, py in points:
+                traffic_lights_world_points.append(image_to_world(px, py))
             
             # Create lane with centerline points
             lane = Lane(
@@ -515,6 +523,7 @@ class TrafficSimulationModel(mesa.Model):
                 speed_limit=30.0,
                 lane_width=3.5,
                 centerline_points=centerline_world_points
+                traffic_lights=traffic_lights_world_points
             )
             
             # Check if spawn is enabled for this lane (spawn at first point)

@@ -38,6 +38,10 @@ python mark_centerlines_ui.py --image eda/data/media/SiteA.jpg --output eda/data
   - Left-click on source lane → target lane to create transition path
   - `ENTER`: Finish connection
   - `ESC`: Cancel connection
+- **Traffic Light Mode** (toggle with `m`):
+  - `1-9, 0`: Select lane
+  - Left-click on lane: Add/remove traffic light
+  - Traffic lights are saved with states and cycle times
 - **Navigation**:
   - Right mouse + drag: Pan
   - `+/-`: Zoom in/out
@@ -88,6 +92,9 @@ python eda/vis/traffic_visualizer.py \
 - **Centerlines**: Single lines marking the path vehicles follow
 - **Spawn Points**: Marked on lanes where vehicles should spawn (at first point)
 - **Lane Connections**: Transition paths between lanes for lane-changing or merging
+- **Traffic Lights**: Control points that can be placed on any lane
+  - Stored with position, state (red/green/yellow), and cycle time
+  - Visual indicators show current state in the UI
 
 ### Coordinate System
 
@@ -131,6 +138,7 @@ TrafficSimulation/
 - ✅ Automatic lane transitions at connections
 - ✅ CSV output for visualization
 - ✅ Video generation from simulation results
+- ✅ Traffic light placement and configuration
 
 ## Technical Details
 

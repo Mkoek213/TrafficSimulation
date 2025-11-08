@@ -340,6 +340,12 @@
           1241
         ]
       ],
+      "traffic_lights": [
+        [
+          1973,
+          940
+        ]
+      ],
       "spawn_enabled": true,
       "num_points": 13
     },

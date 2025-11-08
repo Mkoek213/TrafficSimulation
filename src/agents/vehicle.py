@@ -32,7 +32,7 @@ class Vehicle(mesa.Agent):
     """
     
     def __init__(self, 
-                 model: 'TrafficSimulationModel',
+                 model: TrafficSimulationModel,
                  unique_id: int,
                  lane_id: int,
                  position: float = 0.0,

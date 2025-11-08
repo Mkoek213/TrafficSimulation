@@ -44,7 +44,11 @@ def visualize_lanes(data, background_image_path):
         # Mark and annotate each centerline point with its index
         for idx, (x, y) in enumerate(points):
             # small circular marker
-            ax.plot(x, y, 'o', color=color, markersize=6, markeredgecolor='k', markeredgewidth=0.6)
+            is_traffic_lights = idx in lane.get("traffic_lights", [])
+            ax.plot(x, y,
+                    "v" if is_traffic_lights else "o", color=color,
+                    markersize= 9 if is_traffic_lights else 6,
+                    markeredgecolor='k', markeredgewidth=0.6)
             # add index text with a thin black stroke for readability on varied backgrounds
             txt = ax.text(x, y, str(idx), fontsize=7, color='white', ha='center', va='center')
             txt.set_path_effects([pe.Stroke(linewidth=1.5, foreground='black'), pe.Normal()])

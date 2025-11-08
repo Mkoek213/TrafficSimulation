@@ -46,8 +46,9 @@ class CenterlineMarkerUI:
         self.lanes_data = self._load_existing_lanes()
         
         # Current state
-        self.mode = 'draw'  # 'draw', 'spawn', 'connect'
+        self.mode = 'draw'  # 'draw', 'spawn', 'connect', 'traffic_light'
         self.current_lane_id = self._get_next_lane_id()
+        self.placing_traffic_light = False  # Flag for traffic light placement
         self.current_lane: List[Tuple[int, int]] = []
         self.editing_lane_id: Optional[int] = None
         self.selected_lane_id: Optional[int] = None
@@ -135,6 +136,11 @@ class CenterlineMarkerUI:
         print("    - 'u': UNDO last connection point")
         print("    - 'ENTER': Finish connection")
         print("    - 'ESC': Cancel connection")
+        print("")
+        print("  TRAFFIC LIGHT MODE ('l' key):")
+        print("    - '1-9, 0': Select lane")
+        print("    - LEFT CLICK on lane: Place traffic light")
+        print("    - 'l': Place/remove traffic light at clicked position")
         print("")
         print("General:")
         print("  - 'm': Toggle mode (draw/spawn/connect)")
@@ -248,6 +254,13 @@ class CenterlineMarkerUI:
             # Convert screen coordinates to image coordinates
             img_x, img_y = self._screen_to_image(x, y)
             
+            # Handle traffic light placement
+            if self.mode == 'traffic_light':
+                lane_id = self._find_lane_at_point((img_x, img_y))
+                if lane_id is not None:
+                    self._add_traffic_light(lane_id, (img_x, img_y))
+                return
+            
             if self.mode == 'draw':
                 # Add point to current centerline
                 self.current_lane.append((img_x, img_y))
@@ -341,6 +354,9 @@ class CenterlineMarkerUI:
                 cv2.putText(working_image, f"L{lane_id}", 
                            (first_point[0] + 10, first_point[1] + 20),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        
+        # Draw traffic lights
+        self._draw_traffic_lights(working_image)
         
         # Draw current centerline being drawn
         if self.mode == 'draw' and self.current_lane:
@@ -458,7 +474,8 @@ class CenterlineMarkerUI:
         mode_colors = {
             'draw': (0, 255, 255),
             'spawn': (255, 255, 0),
-            'connect': (255, 0, 255)
+            'connect': (255, 0, 255),
+            'traffic_light': (0, 0, 255)
         }
         cv2.putText(self.display_image, f"Mode: {self.mode.upper()}", 
                    (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, mode_colors.get(self.mode, (255, 255, 255)), 2)
@@ -738,7 +755,7 @@ class CenterlineMarkerUI:
                 self._save_to_file()
             elif key == ord('m'):
                 # Toggle mode
-                modes = ['draw', 'spawn', 'connect']
+                modes = ['draw', 'spawn', 'connect', 'traffic_light']
                 current_idx = modes.index(self.mode)
                 self.mode = modes[(current_idx + 1) % len(modes)]
                 print(f"✓ Switched to {self.mode.upper()} mode")
@@ -808,6 +825,60 @@ class CenterlineMarkerUI:
                 self._redraw()
         
         cv2.destroyAllWindows()
+    
+    def _add_traffic_light(self, lane_id: int, position: Tuple[int, int]):
+        """Add or remove a traffic light at the given position on a lane."""
+        for lane_info in self.lanes_data.get('lanes', []):
+            if lane_info['lane_id'] == lane_id:
+                # Initialize traffic_lights list if it doesn't exist
+                if 'traffic_lights' not in lane_info:
+                    lane_info['traffic_lights'] = []
+                    
+                # Check if there's already a traffic light near this position
+                remove_idx = -1
+                for i, light in enumerate(lane_info['traffic_lights']):
+                    light_pos = light['position']
+                    dist = math.sqrt((position[0] - light_pos[0])**2 + (position[1] - light_pos[1])**2)
+                    if dist < 20:  # Within 20 pixels
+                        remove_idx = i
+                        break
+                
+                if remove_idx >= 0:
+                    # Remove existing traffic light
+                    lane_info['traffic_lights'].pop(remove_idx)
+                    print(f"✓ Removed traffic light from lane {lane_id}")
+                else:
+                    # Add new traffic light
+                    lane_info['traffic_lights'].append({
+                        'position': position,
+                        'state': 'red',  # Initial state
+                        'cycle_time': 30  # Default cycle time in seconds
+                    })
+                    print(f"✓ Added traffic light to lane {lane_id}")
+                
+                self._redraw()
+                break
+    
+    def _draw_traffic_lights(self, working_image: np.ndarray):
+        """Draw all traffic lights on the lanes."""
+        for lane_info in self.lanes_data.get('lanes', []):
+            for light in lane_info.get('traffic_lights', []):
+                pos = tuple(light['position'])
+                # Draw traffic light symbol
+                state = light.get('state', 'red')
+                color = {
+                    'red': (0, 0, 255),
+                    'green': (0, 255, 0),
+                    'yellow': (0, 255, 255)
+                }.get(state, (0, 0, 255))
+                
+                cv2.circle(working_image, pos, 8, color, -1)  # Filled circle
+                cv2.circle(working_image, pos, 8, (255, 255, 255), 1)  # White border
+                
+                # Draw label
+                cv2.putText(working_image, "TL", 
+                           (pos[0] + 10, pos[1] - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
 
 def main():
