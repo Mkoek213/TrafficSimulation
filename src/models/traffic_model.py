@@ -13,7 +13,7 @@ from ..models.road_network import Intersection
 import random
 
 from ..agents.vehicle import Vehicle
-from ..models.road_network import RoadNetwork, Point, Lane, Road
+from ..models.road_network import RoadNetwork, Point, Lane, Road, TrafficLights, TrafficLightsNode
 from ..utils.krauss_model import KraussModel
 
 
@@ -483,7 +483,8 @@ class TrafficSimulationModel(mesa.Model):
         road_id = 0
         
         print(f"Creating custom road network from {len(lanes_list)} marked lanes...")
-        
+        created_traffic_lights = []
+
         # First, create all regular lanes
         for lane_info in lanes_list:
             lane_id = lane_info['lane_id']
@@ -508,13 +509,16 @@ class TrafficSimulationModel(mesa.Model):
             end_point = centerline_world_points[-1]
 
             # Prepare traffic lights
-            points = lane_info.get('traffic_lights', [])
+            traffic_lights_info = lane_info.get('traffic_lights', [])
 
-            # Convert points to world coordinates
-            traffic_lights_world_points = []
-            for px, py in points:
-                traffic_lights_world_points.append(image_to_world(px, py))
-            
+            lane_traffic_lights = []
+            for lights_instance_info in traffic_lights_info:
+                # Convert points to world coordinates
+                px, py = lights_instance_info["position"]
+                lights = TrafficLights(image_to_world(px, py), lane_info["green_stages"])
+                lane_traffic_lights.append(lights)
+
+            created_traffic_lights.extend(lane_traffic_lights)
             # Create lane with centerline points
             lane = Lane(
                 lane_id=lane_id,
@@ -522,8 +526,8 @@ class TrafficSimulationModel(mesa.Model):
                 end_point=end_point,
                 speed_limit=30.0,
                 lane_width=3.5,
-                centerline_points=centerline_world_points
-                traffic_lights=traffic_lights_world_points
+                centerline_points=centerline_world_points,
+                traffic_lights=lane_traffic_lights
             )
             
             # Check if spawn is enabled for this lane (spawn at first point)
@@ -575,6 +579,9 @@ class TrafficSimulationModel(mesa.Model):
             
             road_id += 1
         
+        # Create TrafficLightsNode
+        self.traffic_lights_node = TrafficLightsNode(created_traffic_lights, 100, 20)
+
         # Create lane-changing connection lanes
         self._create_lane_change_connections(lane_data, image_to_world, road_id)
         
@@ -1576,6 +1583,18 @@ class TrafficSimulationModel(mesa.Model):
         """
         return [v for v in self.vehicles if v.lane_id == lane_id]
     
+    def get_traffic_lights_in_lane(self, lane_id: int) -> List[Vehicle]:
+        """
+        Get all traffic lights in a specific lane.
+        
+        Args:
+            lane_id: ID of the lane
+            
+        Returns:
+            List of traffic lights in the lane
+        """
+        return self.road_network.get_lane(lane_id).traffic_lights.copy()
+    
     def get_adjacent_lane(self, lane_id: int, direction: str) -> Optional[int]:
         """
         Get the adjacent lane ID in the specified direction.
@@ -1697,7 +1716,10 @@ class TrafficSimulationModel(mesa.Model):
             len(self.vehicles) < self.max_vehicles):
             self._spawn_vehicle()
             self.spawn_timer = 0.0
-        
+
+        # Update traffic lights
+        self.traffic_lights_node.step()
+
         # Update all agents
         self.vehicle_agents.do("step")
         

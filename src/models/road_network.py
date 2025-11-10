@@ -7,7 +7,7 @@ move along defined paths.
 """
 
 import numpy as np
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Literal
 from dataclasses import dataclass
 
 
@@ -33,6 +33,98 @@ class Point:
         """Multiply point by scalar."""
         return Point(self.x * scalar, self.y * scalar)
 
+class TrafficLights:
+
+    position_point: Point
+    position: int
+    green_stages: List[int]
+    _state: Literal['red', 'green', 'yellow']
+
+    def __init__(self, position: Point, green_stages: List[int]):
+        """Create traffic lights instance, which controls the traffic on a single lane at specific point.
+
+        Args:
+            position (Point): World position of the traffic lights.
+            green_stages (List[int]): List of cycle stages ids when the traffic lights instance is in the 'green' state. States on all ohter stages are assumed to be 'red' (the 'yellow' state is just a tranition state).
+        """
+        self.position_point = position
+        self.green_stages = green_stages.copy()
+        self._state = None
+
+    def indicate_stage_changing_soon(self, next_stage: int):
+        """Indicates, that the TrafficLightsNode stage is going to change soon. For TrafficLights in state 'green' which are going to transition to 'red' it means state change to 'yelow' state. For the currently 'red' ones - no transition at all.
+        Args:
+            next_stage (int): Id of next stage. TrafficLights will change its state according to it."""
+        next_stage_state = 'green' if self.green_stages[next_stage] else 'red'
+        if self._state == 'green' and next_stage_state == 'red':
+            self._state = 'yellow'
+        # switching from red to green is not indicated earlier
+
+    def change_cycle_stage(self, next_stage: int):
+        """Invoke TrafficLights state transition. For 'yellow' TrafficLights it means a transition to state 'red' and for the 'red' ones changing their state in the next stage a transition to 'green'.
+
+        Args:
+            next_stage (int): Id of a next stage. TrafficLights will change its state according to it.
+        """
+        self._state = 'green' if self.green_stages[next_stage] else 'red'
+
+    def get_state(self):
+        return self._state
+    
+
+
+class TrafficLightsNode:
+
+    _traffic_lights_instances: List[TrafficLights]
+    _cycle_stages: List[int]
+    _stage_change_step: int
+    _stage_change_indication_step: int
+    
+    _stage_counter: int
+    _steps_counter: int
+
+    def __init__(self, traffic_lights_instances: List[TrafficLights], steps_per_stage: int, steps_per_change_indication: int):
+        """Create node of traffic lights instances. Node is responsible for traffic lights synchronization.
+
+        Args:
+            traffic_lights_instances (List[TrafficLights]): All instances of traffic lights which make the node.
+            steps_per_stage (int): Length in steps of the cycle stage (the time between the transitions of traffic lights instances between e.g. 'red' and 'green' states).
+            steps_per_change_indication (int): Length in steps of the stage change indicaton i.e. how long the 'yellow' state lasts.
+        """
+        self._traffic_lights_instances = traffic_lights_instances.copy()
+        self._stage_change_step = steps_per_stage
+        self._stage_change_indication_step = steps_per_stage - steps_per_change_indication
+        stages = {}
+        for traffic_lights in traffic_lights_instances:
+            stages.update(traffic_lights.green_stages)
+        self._cycle_stages = list(sorted(stages))
+
+        self._stage_counter = 0
+        self._steps_counter = 0
+        self._change_stage()
+
+    def _change_stage(self):
+        new_stage = self._cycle_stages[self._stage_counter]
+        for traffic_lights in self._traffic_lights_instances:
+            traffic_lights.change_cycle_stage(new_stage)
+
+    def _indicate_stage_change(self):
+        new_stage = self._cycle_stages[self._stage_counter]
+        for traffic_lights in self._traffic_lights_instances:
+            traffic_lights.indicate_stage_changing_soon(new_stage)
+    
+    def step(self):
+        """Take into account the time duration and change traffic lights instances states if applicable.
+        """
+        self._steps_counter = (self._steps_counter + 1) % self._stage_change_step
+        if self._steps_counter == self._stage_change_indication_step:
+            self._indicate_stage_change()
+        elif self._steps_counter == 0:
+            self._stage_counter = (self._stage_counter + 1) % len(self._cycle_stages)
+            self._change_stage()
+
+        
+
 
 class Lane:
     """
@@ -54,7 +146,7 @@ class Lane:
                  speed_limit: float = 30.0,  # m/s
                  lane_width: float = 3.5,   # meters
                  centerline_points: Optional[List[Point]] = None, # Optional centerline path points
-                 traffic_lights: Optional[List[Point]] = None):  
+                 traffic_lights: Optional[List[TrafficLights]] = None):  
         """
         Initialize a lane.
         
@@ -120,6 +212,10 @@ class Lane:
         self.allows_left_turn = False
         self.allows_right_turn = False
         self.allows_straight = True
+
+        # Update traffic lights with its position on lane
+        for lights in self.traffic_lights:
+            lights.position = self.get_distance_from_start(lights.position_point)
     
     def _calculate_direction(self) -> Tuple[float, float]:
         """Calculate the direction vector of the lane."""
