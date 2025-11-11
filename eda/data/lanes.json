@@ -36,7 +36,10 @@
             1813,
             1228
           ],
-          "green_stages": []
+          "green_stages": [
+            1,
+            2
+          ]
         }
       ]
     },
@@ -65,7 +68,10 @@
             1813,
             1199
           ],
-          "green_stages": []
+          "green_stages": [
+            1,
+            2
+          ]
         }
       ]
     },
@@ -142,7 +148,9 @@
             1813,
             1157
           ],
-          "green_stages": []
+          "green_stages": [
+            2
+          ]
         }
       ]
     },
@@ -167,7 +175,9 @@
             2128,
             1124
           ],
-          "green_stages": []
+          "green_stages": [
+            1
+          ]
         }
       ]
     },
@@ -212,7 +222,9 @@
             2128,
             1132
           ],
-          "green_stages": []
+          "green_stages": [
+            1
+          ]
         }
       ]
     },
@@ -237,7 +249,9 @@
             2128,
             1095
           ],
-          "green_stages": []
+          "green_stages": [
+            1
+          ]
         }
       ]
     },
@@ -286,7 +300,11 @@
             2228,
             1033
           ],
-          "green_stages": []
+          "green_stages": [
+            1,
+            2,
+            3
+          ]
         }
       ]
     },
@@ -351,7 +369,11 @@
             1900,
             933
           ],
-          "green_stages": []
+          "green_stages": [
+            1,
+            2,
+            3
+          ]
         }
       ]
     },
@@ -420,7 +442,9 @@
             1970,
             950
           ],
-          "green_stages": []
+          "green_stages": [
+            3
+          ]
         }
       ]
     },
@@ -493,7 +517,9 @@
             2012,
             954
           ],
-          "green_stages": []
+          "green_stages": [
+            3
+          ]
         }
       ]
     }

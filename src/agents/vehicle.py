@@ -246,8 +246,23 @@ class Vehicle(mesa.Agent):
 
                 # Else drive as fast as the leader allows
 
-        self.speed = min(next_speed, traffic_lights_based_speed)
-        
+        # Determine provisional speed taking into account leader and traffic lights
+        provisional_speed = min(next_speed, traffic_lights_based_speed)
+
+        # If approaching a red traffic light, ensure we stop before its position
+        if applicable_traffic_lights is not None and applicable_traffic_lights.get_state() == 'red':
+            tl_pos = applicable_traffic_lights.position
+            # stop line set a bit before the light (half vehicle length + small buffer)
+            stop_buffer = 2.0
+            stop_line = tl_pos - (self.length / 2.0) - stop_buffer
+            # Projected next position with provisional speed
+            projected_next = self._calculate_position_update(self.position, provisional_speed, dt)
+            # If we would pass the stop line in next step, set speed to zero to stop before it
+            if projected_next >= stop_line and self.position < stop_line:
+                provisional_speed = 0.0
+
+        self.speed = provisional_speed
+
         # Update position
         next_position = self._calculate_position_update(
             self.position,

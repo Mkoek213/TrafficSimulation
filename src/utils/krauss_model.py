@@ -162,7 +162,7 @@ class KraussModel:
         decel = max(self.max_deceleration, decel) # both are negative
         result = current_speed + decel * dt
 
-        if result < 0.05 * self.max_speed:
+        if result * dt > distance_to_traffic_lights:
             return 0.0
         return result
     
