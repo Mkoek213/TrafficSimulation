@@ -44,8 +44,8 @@ def calculate_bounding_box_corners(
     ])
     
     # Rotation matrix
-    cos_a = np.cos(angle)
-    sin_a = np.sin(angle)
+    cos_a = np.cos(-angle)
+    sin_a = np.sin(-angle)
     rotation_matrix = np.array([
         [cos_a, -sin_a],
         [sin_a,  cos_a]

@@ -39,7 +39,7 @@ class Vehicle(mesa.Agent):
                  speed: float = 0.0,
                  max_speed: float = 30.0,
                  max_acceleration: float = 2.0,
-                 max_deceleration: float = -4.0,
+                 max_deceleration: float = -10.0,
                  length: float = 4.5,  # meters
                  width: float = 2.0,   # meters
                  color: Tuple[int, int, int] = (255, 0, 0)):  # Red by default
@@ -106,15 +106,7 @@ class Vehicle(mesa.Agent):
         
         # Return the next vehicle ahead (if any)
         if current_index + 1 < len(lane_vehicles):
-            leader = lane_vehicles[current_index + 1]
-            # Only return leader if they're actually ahead (considering wrap-around)
-            lane_length = self.model.get_lane_length(self.lane_id)
-            if leader.position > self.position:
-                # Leader is ahead in normal order
-                return leader
-            elif leader.position < self.position - lane_length * 0.5:
-                # Leader wrapped around and is ahead
-                return leader
+            return lane_vehicles[current_index + 1]
         
         return None
 
@@ -167,37 +159,37 @@ class Vehicle(mesa.Agent):
         # The safety margin is handled in the Krauss model instead
         return max(0.0, distance)
     
-    def _estimate_acceleration(self) -> float:
-        """
-        Estimate current acceleration based on speed and distance to leader.
+    # def _estimate_acceleration(self) -> float:
+    #     """
+    #     Estimate current acceleration based on speed and distance to leader.
         
-        Returns:
-            Estimated acceleration (m/s²)
-        """
-        leader = self.get_leader()
-        if leader is None:
-            # Free flow - accelerate towards max speed
-            if self.speed < self.target_speed:
-                return 2.0  # Max acceleration
-            return 0.0
+    #     Returns:
+    #         Estimated acceleration (m/s²)
+    #     """
+    #     leader = self.get_leader()
+    #     if leader is None:
+    #         # Free flow - accelerate towards max speed
+    #         if self.speed < self.target_speed:
+    #             return 2.0  # Max acceleration
+    #         return 0.0
         
-        distance_to_leader = self.calculate_distance_to_leader()
+    #     distance_to_leader = self.calculate_distance_to_leader()
         
-        # Simple estimation
-        if distance_to_leader > 50:
-            # Plenty of space
-            speed_diff = leader.speed - self.speed
-            if speed_diff > 0:
-                return min(2.0, speed_diff * 0.1)
-            return 0.0
-        elif distance_to_leader < 20:
-            # Too close - need to brake
-            return -2.0
+    #     # Simple estimation
+    #     if distance_to_leader > 50:
+    #         # Plenty of space
+    #         speed_diff = leader.speed - self.speed
+    #         if speed_diff > 0:
+    #             return min(2.0, speed_diff * 0.1)
+    #         return 0.0
+    #     elif distance_to_leader < 20:
+    #         # Too close - need to brake
+    #         return -2.0
         
-        # Normal following
-        if leader.speed < self.speed:
-            return -1.0
-        return 0.0
+    #     # Normal following
+    #     if leader.speed < self.speed:
+    #         return -1.0
+    #     return 0.0
     
     def step(self):
         """
@@ -209,38 +201,55 @@ class Vehicle(mesa.Agent):
         next_speed = leader_based_speed
 
         # Take into account traffic lights
-        all_traffic_lights = self.model.get_traffic_lights_in_lane(self.lane_id).sort(key=lambda x: x.position)
-        applicable_traffic_lights = next((x for x in all_traffic_lights if x.position > self.position))
+        all_traffic_lights = self.model.get_traffic_lights_in_lane(self.lane_id)
+        all_traffic_lights.sort(key=lambda x: x.position)
+        applicable_traffic_lights = next((x for x in all_traffic_lights if x.position > self.position), None)
 
-        # Calculate possible stopping distance
-        distance = applicable_traffic_lights.position - self.position
-        stopping_distance = self.speed / (-self.krauss_model.max_deceleration)
+        traffic_lights_based_speed = next_speed
 
-        # Handle the red light case
-        if applicable_traffic_lights.state == 'red' and stopping_distance < distance:
-            # Brake to stop on the red lights
-            next_speed = self.krauss_model.calculate_next_speed(
-                self.speed,
-                distance,
-                0
-            )
-        # Else drive as fast as the leader allows
+        if applicable_traffic_lights is not None:
+            # Calculate distance to traffic lights
+            distance = applicable_traffic_lights.position - self.position
 
-        # Hanlde the yellow light case
-        necessary_time = distance / leader_based_speed # necessary time to reach traffic lights with leader-based position
-        if applicable_traffic_lights.state == 'yellow' and necessary_time > 3:
-            # Brake to stop on the red light
-            next_speed = self.krauss_model.calculate_next_speed(
-                self.speed,
-                distance,
-                0
-            )
-        # Else drive as fast as the leader allows
+            if distance < self.calculate_distance_to_leader():
+                # Calculate possible stopping distance
+                v_0 = self.speed
+                a = abs(self.krauss_model.max_deceleration) # non negative form
+                min_stopping_distance = v_0**2 / (2*a) # derived from v_0*t - 0.5*a*t**2 when t = v_0 / a
 
-        self.speed = next_speed
+                # if applicable_traffic_lights.get_state() == 'red' or applicable_traffic_lights.get_state() == 'yellow':
+                #     decel = self.speed ** 2 / (2*distance)
+                #     next_speed = self.speed - decel * dt
+                # print(f"stopping distance: {min_stopping_distance}")
+
+                # Handle the red light case
+                if applicable_traffic_lights.get_state() == 'red' and distance < min_stopping_distance * 3:
+                    # Brake to stop on the red lights
+                    traffic_lights_based_speed = self.krauss_model.calculate_traffic_lights_based_next_speed(
+                        self.speed,
+                        distance - self.length / 2,
+                        dt
+                    )
+                    # print(f"Stopping in front of {applicable_traffic_lights.get_state()} lights at distance {distance} and speed {traffic_lights_based_speed}")
+                # Else drive as fast as the leader allows
+
+                # Handle the yellow light case
+                necessary_time = distance / leader_based_speed # necessary time to reach traffic lights with leader-based speed
+                if applicable_traffic_lights.get_state() == 'yellow' and necessary_time > 3:
+                    # Brake to stop on the red light
+                    traffic_lights_based_speed = self.krauss_model.calculate_traffic_lights_based_next_speed(
+                        self.speed,
+                        distance - self.length,
+                        dt
+                    )
+                    print(f"Stopping in front of {applicable_traffic_lights.get_state()} lights at distance {distance} and speed {traffic_lights_based_speed}")
+
+                # Else drive as fast as the leader allows
+
+        self.speed = min(next_speed, traffic_lights_based_speed)
         
         # Update position
-        next_position = self.krauss_model.calculate_position_update(
+        next_position = self._calculate_position_update(
             self.position,
             self.speed,
             dt
@@ -292,27 +301,19 @@ class Vehicle(mesa.Agent):
         # Get leader speed
         leader_speed = None
         leader = self.get_leader()
+        leader_length = self.length
         if leader is not None:
             leader_speed = leader.speed
+            leader_length = leader.length
         
         # Calculate next speed using Krauss model
         # The Krauss model already handles safe speed calculation
         next_speed = self.krauss_model.calculate_next_speed(
             self.speed,
-            distance_to_leader,
+            distance_to_leader - self.length / 2 - leader_length / 2,
+            self.model.time_step,
             leader_speed
         )
-        
-        # Ensure minimum speed to prevent complete stalling
-        # Minimum speeds multiplied by 10 for 10x faster movement (much faster for demos)
-        if distance_to_leader > 50.0 or leader is None:
-            next_speed = max(self.speed, 20.0 * 10.0)  # Minimum 200 m/s (720 km/h) - 10x faster
-        elif distance_to_leader > 20.0:
-            # Medium distance - maintain at least 150 m/s (540 km/h) - 10x faster
-            next_speed = max(self.speed, 15.0 * 10.0)
-        elif distance_to_leader > 10.0:
-            # Close but not too close - maintain at least 100 m/s (360 km/h) - 10x faster
-            next_speed = max(self.speed, 10.0 * 10.0)
         
         return next_speed
     
@@ -520,3 +521,20 @@ class Vehicle(mesa.Agent):
         # If changing lanes, interpolate between current and target lane angles
         lane_direction = self.model.get_lane_direction(self.lane_id, self.position)
         return np.arctan2(lane_direction[1], lane_direction[0])
+
+    def _calculate_position_update(self, 
+                                current_position: float,
+                                current_speed: float,
+                                dt: float = 1.0) -> float:
+        """
+        Calculate the next position based on current speed.
+        
+        Args:
+            current_position: Current position (m)
+            current_speed: Current speed (m/s)
+            dt: Time step (seconds)
+            
+        Returns:
+            Next position (m)
+        """
+        return current_position + current_speed * dt

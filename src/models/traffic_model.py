@@ -35,7 +35,8 @@ class TrafficSimulationModel(mesa.Model):
                  time_step: float = 0.1,  # seconds
                  vehicle_spawn_rate: float = 0.5,  # vehicles per second (more frequent spawning)
                  max_vehicles: int = 150,
-                 custom_lanes_path: Optional[str] = None):
+                 custom_lanes_path: Optional[str] = None,
+                 model_boost: float = 10):
         """
         Initialize the traffic simulation model.
         
@@ -46,6 +47,7 @@ class TrafficSimulationModel(mesa.Model):
             vehicle_spawn_rate: Rate of vehicle spawning (vehicles/second)
             max_vehicles: Maximum number of vehicles in simulation
             custom_lanes_path: Path to JSON file with custom lanes (if None, uses default network)
+            model_boot (float): How much faster the vehicles are moving than in reality.
         """
         super().__init__()
         
@@ -55,6 +57,7 @@ class TrafficSimulationModel(mesa.Model):
         self.time_step = time_step
         self.vehicle_spawn_rate = vehicle_spawn_rate
         self.max_vehicles = max_vehicles
+        self.model_boost = 10
         
         # MESA components
         self.vehicle_agents = AgentSet([])
@@ -515,7 +518,7 @@ class TrafficSimulationModel(mesa.Model):
             for lights_instance_info in traffic_lights_info:
                 # Convert points to world coordinates
                 px, py = lights_instance_info["position"]
-                lights = TrafficLights(image_to_world(px, py), lane_info["green_stages"])
+                lights = TrafficLights(image_to_world(px, py), lights_instance_info["green_stages"])
                 lane_traffic_lights.append(lights)
 
             created_traffic_lights.extend(lane_traffic_lights)
@@ -580,7 +583,7 @@ class TrafficSimulationModel(mesa.Model):
             road_id += 1
         
         # Create TrafficLightsNode
-        self.traffic_lights_node = TrafficLightsNode(created_traffic_lights, 100, 20)
+        self.traffic_lights_node = TrafficLightsNode(created_traffic_lights, int(30 / self.time_step), int(10 / self.time_step))
 
         # Create lane-changing connection lanes
         self._create_lane_change_connections(lane_data, image_to_world, road_id)
@@ -1357,16 +1360,16 @@ class TrafficSimulationModel(mesa.Model):
         speed_roll = random.random()
         if speed_roll < 0.6:
             # Fast vehicles (highway speeds) - 10x faster
-            max_speed = random.uniform(25.0, 35.0) * 10.0  # m/s (900-1260 km/h equivalent)
+            max_speed = random.uniform(25.0, 35.0) * self.model_boost  # m/s (900-1260 km/h equivalent)
         elif speed_roll < 0.9:
             # Medium speed vehicles (city speeds) - 10x faster
-            max_speed = random.uniform(15.0, 22.0) * 10.0  # m/s (540-790 km/h equivalent)
+            max_speed = random.uniform(15.0, 22.0) * self.model_boost  # m/s (540-790 km/h equivalent)
         else:
             # Slow vehicles (traffic/slow drivers) - 10x faster
-            max_speed = random.uniform(10.0, 15.0) * 10.0  # m/s (360-540 km/h equivalent)
+            max_speed = random.uniform(10.0, 15.0)  * self.model_boost  # m/s (360-540 km/h equivalent)
         
-        max_acceleration = random.uniform(2.5, 4.0)  # m/s² (varied acceleration)
-        max_deceleration = random.uniform(-4.0, -6.0)  # m/s² (varied braking)
+        max_acceleration = random.uniform(2.5 * self.model_boost, 4.0 * self.model_boost)  # m/s² (varied acceleration)
+        max_deceleration = random.uniform(-4.0 * self.model_boost, -6.0 * self.model_boost)  # m/s² (varied braking)
         
         # Random color - but default to yellow for visibility
         color = (255, 220, 0)  # Yellow by default (like in the image)
@@ -1583,7 +1586,7 @@ class TrafficSimulationModel(mesa.Model):
         """
         return [v for v in self.vehicles if v.lane_id == lane_id]
     
-    def get_traffic_lights_in_lane(self, lane_id: int) -> List[Vehicle]:
+    def get_traffic_lights_in_lane(self, lane_id: int) -> List[TrafficLights]:
         """
         Get all traffic lights in a specific lane.
         
@@ -1593,7 +1596,8 @@ class TrafficSimulationModel(mesa.Model):
         Returns:
             List of traffic lights in the lane
         """
-        return self.road_network.get_lane(lane_id).traffic_lights.copy()
+        lane = self.road_network.get_lane(lane_id)
+        return [] if lane is None else lane.traffic_lights
     
     def get_adjacent_lane(self, lane_id: int, direction: str) -> Optional[int]:
         """

@@ -36,8 +36,7 @@
             1813,
             1228
           ],
-          "state": "red",
-          "cycle_time": 30
+          "green_stages": []
         }
       ]
     },
@@ -66,8 +65,7 @@
             1813,
             1199
           ],
-          "state": "red",
-          "cycle_time": 30
+          "green_stages": []
         }
       ]
     },
@@ -144,8 +142,7 @@
             1813,
             1157
           ],
-          "state": "red",
-          "cycle_time": 30
+          "green_stages": []
         }
       ]
     },
@@ -170,8 +167,7 @@
             2128,
             1124
           ],
-          "state": "red",
-          "cycle_time": 30
+          "green_stages": []
         }
       ]
     },
@@ -216,8 +212,7 @@
             2128,
             1132
           ],
-          "state": "red",
-          "cycle_time": 30
+          "green_stages": []
         }
       ]
     },
@@ -242,8 +237,7 @@
             2128,
             1095
           ],
-          "state": "red",
-          "cycle_time": 30
+          "green_stages": []
         }
       ]
     },
@@ -292,8 +286,7 @@
             2228,
             1033
           ],
-          "state": "red",
-          "cycle_time": 30
+          "green_stages": []
         }
       ]
     },
@@ -358,8 +351,7 @@
             1900,
             933
           ],
-          "state": "red",
-          "cycle_time": 30
+          "green_stages": []
         }
       ]
     },
@@ -428,8 +420,7 @@
             1970,
             950
           ],
-          "state": "red",
-          "cycle_time": 30
+          "green_stages": []
         }
       ]
     },
@@ -502,8 +493,7 @@
             2012,
             954
           ],
-          "state": "red",
-          "cycle_time": 30
+          "green_stages": []
         }
       ]
     }

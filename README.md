@@ -41,7 +41,9 @@ python mark_centerlines_ui.py --image eda/data/media/SiteA.jpg --output eda/data
 - **Traffic Light Mode** (toggle with `m`):
   - `1-9, 0`: Select lane
   - Left-click on lane: Add/remove traffic light
-  - Traffic lights are saved with states and cycle times
+  - Scroll-click on traffic light: Select traffic light
+  - 'e' - Edit cycle stages, when the light is green (`green_stages`)
+  - Traffic lights are saved with `position` and editable `green_stages` (list of stage indices)
 - **Navigation**:
   - Right mouse + drag: Pan
   - `+/-`: Zoom in/out
@@ -93,8 +95,9 @@ python eda/vis/traffic_visualizer.py \
 - **Spawn Points**: Marked on lanes where vehicles should spawn (at first point)
 - **Lane Connections**: Transition paths between lanes for lane-changing or merging
 - **Traffic Lights**: Control points that can be placed on any lane
-  - Stored with position, state (red/green/yellow), and cycle time
-  - Visual indicators show current state in the UI
+**Traffic Lights**: Control points that can be placed on any lane
+  - Stored with `position` and `green_stages` (list of integers)
+  - Visual indicator: active color for traffic lights on the selected lane, dimmed for others
 
 ### Coordinate System
 

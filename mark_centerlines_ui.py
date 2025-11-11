@@ -18,6 +18,7 @@ import argparse
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 import math
+import copy
 
 
 class CenterlineMarkerUI:
@@ -49,6 +50,11 @@ class CenterlineMarkerUI:
         self.mode = 'draw'  # 'draw', 'spawn', 'connect', 'traffic_light'
         self.current_lane_id = self._get_next_lane_id()
         self.placing_traffic_light = False  # Flag for traffic light placement
+        # Selected traffic light: tuple(lane_id, index) or None
+        self.selected_traffic_light: Optional[Tuple[int, int]] = None
+        # Editing state for traffic light green_stages input
+        self.tl_editing: bool = False
+        self.tl_edit_input: str = ''
         self.current_lane: List[Tuple[int, int]] = []
         self.editing_lane_id: Optional[int] = None
         self.selected_lane_id: Optional[int] = None
@@ -90,6 +96,25 @@ class CenterlineMarkerUI:
                 data.setdefault('image_path', self.image_path)
                 data.setdefault('image_width', self.width)
                 data.setdefault('image_height', self.height)
+                # Normalize traffic light entries to new format: position + green_stages
+                for lane in data.get('lanes', []):
+                    tls = lane.get('traffic_lights', []) or []
+                    new_tls = []
+                    for tl in tls:
+                        # tl might be old format with 'state'/'cycle_time' or new
+                        pos = tl.get('position') if isinstance(tl, dict) else None
+                        if pos is None and isinstance(tl, list) and len(tl) >= 2:
+                            pos = tl
+                        if pos is None:
+                            continue
+                        gs = tl.get('green_stages') if isinstance(tl, dict) else None
+                        if gs is None:
+                            gs = []
+                        new_tls.append({'position': list(pos), 'green_stages': gs})
+                    if new_tls:
+                        lane['traffic_lights'] = new_tls
+                    else:
+                        lane.setdefault('traffic_lights', [])
                 return data
         else:
             # Create new structure
@@ -141,6 +166,8 @@ class CenterlineMarkerUI:
         print("    - '1-9, 0': Select lane")
         print("    - LEFT CLICK on lane: Place traffic light")
         print("    - 'l': Place/remove traffic light at clicked position")
+        print("    - MIDDLE CLICK: Select nearest traffic light on click (shows panel)")
+        print("    - When selected: press 'e' to edit green_stages (type numbers/comma, ENTER to save)")
         print("")
         print("General:")
         print("  - 'm': Toggle mode (draw/spawn/connect)")
@@ -221,6 +248,23 @@ class CenterlineMarkerUI:
                     closest_lane_id = lane_id
         
         return closest_lane_id if min_dist < 50 else None
+
+    def _find_traffic_light_at_point(self, point: Tuple[int, int]) -> Optional[Tuple[int, int]]:
+        """Find the nearest traffic light within a threshold. Returns (lane_id, index) or None."""
+        px, py = point
+        best = None
+        best_dist = float('inf')
+        for lane_info in self.lanes_data.get('lanes', []):
+            lane_id = lane_info['lane_id']
+            for idx, tl in enumerate(lane_info.get('traffic_lights', [])):
+                pos = tl.get('position', None)
+                if pos is None:
+                    continue
+                dist = math.hypot(px - pos[0], py - pos[1])
+                if dist < best_dist and dist < 25:  # threshold 25 px
+                    best_dist = dist
+                    best = (lane_id, idx)
+        return best
     
     def _mouse_callback(self, event, x, y, flags, param):
         """Handle mouse events."""
@@ -241,6 +285,21 @@ class CenterlineMarkerUI:
                 self.pan_y += y - self.pan_start_y
                 self.pan_start_x = x
                 self.pan_start_y = y
+                self._redraw()
+            return
+
+        # Handle middle mouse button for selecting traffic lights
+        if event == cv2.EVENT_MBUTTONDOWN:
+            # Convert screen coordinates to image coordinates
+            img_x, img_y = self._screen_to_image(x, y)
+            tl = self._find_traffic_light_at_point((img_x, img_y))
+            if tl is not None:
+                lane_id, idx = tl
+                self.selected_traffic_light = (lane_id, idx)
+                print(f"✓ Selected traffic light {idx} on lane {lane_id}")
+                # Clear any editing buffer
+                self.tl_editing = False
+                self.tl_edit_input = ''
                 self._redraw()
             return
         
@@ -504,6 +563,41 @@ class CenterlineMarkerUI:
                     status_y += 30
                 cv2.putText(self.display_image, "Press ENTER to finish, ESC to cancel", 
                            (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+        # If a traffic light is selected, draw a small panel on the right with editable properties
+        if self.selected_traffic_light is not None:
+            # Draw panel background (semi-transparent rectangle)
+            h, w = self.display_image.shape[:2]
+            panel_w = 320
+            panel_x = w - panel_w - 10
+            panel_y = 50
+            # Draw dark rectangle
+            cv2.rectangle(self.display_image, (panel_x, panel_y), (w-10, panel_y + 200), (30, 30, 30), -1)
+            cv2.rectangle(self.display_image, (panel_x, panel_y), (w-10, panel_y + 200), (200, 200, 200), 1)
+            # Write contents
+            lane_id, idx = self.selected_traffic_light
+            cv2.putText(self.display_image, f"Traffic Light: L{lane_id} #{idx}", (panel_x + 10, panel_y + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 1)
+            # Fetch tl data
+            tl = None
+            for lane in self.lanes_data.get('lanes', []):
+                if lane['lane_id'] == lane_id:
+                    tls = lane.get('traffic_lights', [])
+                    if 0 <= idx < len(tls):
+                        tl = tls[idx]
+                    break
+            if tl is not None:
+                pos = tl.get('position', [0,0])
+                cv2.putText(self.display_image, f"Position: {pos[0]}, {pos[1]}", (panel_x + 10, panel_y + 55), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200,200,200), 1)
+                # Show green_stages editable field
+                gs = tl.get('green_stages', [])
+                gs_str = ",".join(str(int(v)) for v in gs)
+                cv2.putText(self.display_image, "green_stages:", (panel_x + 10, panel_y + 85), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200,200,200), 1)
+                # If editing, show input buffer
+                if self.tl_editing:
+                    display_str = self.tl_edit_input + "_"
+                else:
+                    display_str = gs_str
+                cv2.putText(self.display_image, display_str, (panel_x + 10, panel_y + 110), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180,180,180), 1)
+                cv2.putText(self.display_image, "Press 'e' to edit, ENTER to save", (panel_x + 10, panel_y + 140), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (120,120,120), 1)
         
         cv2.imshow(self.window_name, self.display_image)
         cv2.waitKey(1)  # Force window update
@@ -733,8 +827,24 @@ class CenterlineMarkerUI:
         self.lanes_data['image_width'] = self.width
         self.lanes_data['image_height'] = self.height
         
+        # Sanitize traffic lights before saving: only keep position and green_stages
+        data_to_save = copy.deepcopy(self.lanes_data)
+        for lane in data_to_save.get('lanes', []):
+            tls = lane.get('traffic_lights', [])
+            new_tls = []
+            for tl in tls:
+                pos = tl.get('position')
+                gs = tl.get('green_stages', [])
+                new_tls.append({'position': list(pos) if pos is not None else None,
+                                'green_stages': gs if gs is not None else []})
+            if new_tls:
+                lane['traffic_lights'] = new_tls
+            elif 'traffic_lights' in lane:
+                # ensure empty list saved when present
+                lane['traffic_lights'] = []
+
         with open(self.output_path, 'w') as f:
-            json.dump(self.lanes_data, f, indent=2)
+            json.dump(data_to_save, f, indent=2)
         
         num_lanes = len(self.lanes_data.get('lanes', []))
         num_connections = len(self.lanes_data.get('lane_connections', []))
@@ -762,6 +872,42 @@ class CenterlineMarkerUI:
                 # Reset connection state when switching modes
                 if self.mode != 'connect':
                     self._cancel_connection()
+                self._redraw()
+            elif key == ord('l') and self.mode == 'traffic_light':
+                # Toggle add/remove at last click position - handled in mouse click; here we just hint
+                print("TIP: Left-click to add/remove traffic light. Middle-click to select one.")
+            elif key == ord('e') and self.mode == 'traffic_light':
+                # Start editing green_stages if a TL is selected
+                if self.selected_traffic_light is None:
+                    print("⚠ No traffic light selected (middle-click to select)")
+                else:
+                    self.tl_editing = True
+                    self.tl_edit_input = ''
+                    print("✓ Editing green_stages: type numbers separated by commas, press ENTER to save")
+            elif key == 13 and self.tl_editing and self.mode == 'traffic_light':
+                # Finish editing: parse input and save
+                try:
+                    parts = [p.strip() for p in self.tl_edit_input.split(',') if p.strip()]
+                    stages = [int(p) for p in parts]
+                except Exception:
+                    print("⚠ Invalid input for green_stages. Use comma-separated integers.")
+                    self.tl_editing = False
+                    self.tl_edit_input = ''
+                else:
+                    lane_id, idx = self.selected_traffic_light
+                    lane = self._get_lane_by_id(lane_id)
+                    if lane and 0 <= idx < len(lane.get('traffic_lights', [])):
+                        lane['traffic_lights'][idx]['green_stages'] = stages
+                        print(f"✓ Saved green_stages = {stages} for TL {idx} on lane {lane_id}")
+                    self.tl_editing = False
+                    self.tl_edit_input = ''
+                    self._redraw()
+            elif self.tl_editing and self.mode == 'traffic_light':
+                # Capture typed characters into tl_edit_input
+                if key == 8 or key == 127:  # backspace
+                    self.tl_edit_input = self.tl_edit_input[:-1]
+                elif 32 <= key <= 126:
+                    self.tl_edit_input += chr(key)
                 self._redraw()
             elif key == ord('n') and self.mode == 'draw':
                 # Start new lane
@@ -846,13 +992,16 @@ class CenterlineMarkerUI:
                 if remove_idx >= 0:
                     # Remove existing traffic light
                     lane_info['traffic_lights'].pop(remove_idx)
+                    # If removed traffic light was selected, clear selection
+                    if self.selected_traffic_light and self.selected_traffic_light[0] == lane_id and self.selected_traffic_light[1] == remove_idx:
+                        self.selected_traffic_light = None
                     print(f"✓ Removed traffic light from lane {lane_id}")
                 else:
                     # Add new traffic light
                     lane_info['traffic_lights'].append({
-                        'position': position,
-                        'state': 'red',  # Initial state
-                        'cycle_time': 30  # Default cycle time in seconds
+                        'position': list(position),
+                        # Keep minimal fields; state/cycle_time are deprecated
+                        'green_stages': []  # list of ints representing green stages
                     })
                     print(f"✓ Added traffic light to lane {lane_id}")
                 
@@ -861,24 +1010,23 @@ class CenterlineMarkerUI:
     
     def _draw_traffic_lights(self, working_image: np.ndarray):
         """Draw all traffic lights on the lanes."""
+        # Display all traffic lights. Only those on selected lane get the 'active' color.
         for lane_info in self.lanes_data.get('lanes', []):
-            for light in lane_info.get('traffic_lights', []):
-                pos = tuple(light['position'])
-                # Draw traffic light symbol
-                state = light.get('state', 'red')
-                color = {
-                    'red': (0, 0, 255),
-                    'green': (0, 255, 0),
-                    'yellow': (0, 255, 255)
-                }.get(state, (0, 0, 255))
-                
-                cv2.circle(working_image, pos, 8, color, -1)  # Filled circle
-                cv2.circle(working_image, pos, 8, (255, 255, 255), 1)  # White border
-                
-                # Draw label
-                cv2.putText(working_image, "TL", 
-                           (pos[0] + 10, pos[1] - 10),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            lane_id = lane_info['lane_id']
+            is_selected_lane = (lane_id == self.selected_lane_id)
+            for idx, light in enumerate(lane_info.get('traffic_lights', [])):
+                pos = tuple(light.get('position', (0, 0)))
+                # Active color for selected lane, inactive color otherwise
+                color = (0, 255, 0) if is_selected_lane else (100, 100, 100)
+                cv2.circle(working_image, pos, 8, color, -1)
+                cv2.circle(working_image, pos, 8, (255, 255, 255), 1)
+                cv2.putText(working_image, "TL", (pos[0] + 10, pos[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+                # If this traffic light is selected, draw square border and panel will be shown by _redraw
+                if self.selected_traffic_light and self.selected_traffic_light[0] == lane_id and self.selected_traffic_light[1] == idx:
+                    x, y = pos
+                    half = 12
+                    cv2.rectangle(working_image, (x-half, y-half), (x+half, y+half), (0, 255, 255), 2)
 
 
 def main():

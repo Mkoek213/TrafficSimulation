@@ -1,0 +1,1187 @@
+{
+  "image_path": "eda/data/media/SiteA.jpg",
+  "image_width": 3840,
+  "image_height": 2160,
+  "lanes": [
+    {
+      "lane_id": 0,
+      "lane_number": 0,
+      "centerline_points": [
+        [
+          7,
+          1200
+        ],
+        [
+          801,
+          1220
+        ],
+        [
+          1514,
+          1224
+        ],
+        [
+          2789,
+          1236
+        ],
+        [
+          3832,
+          1244
+        ]
+      ],
+      "spawn_enabled": true,
+      "num_points": 5,
+      "traffic_lights": [
+        {
+          "position": [
+            1813,
+            1228
+          ],
+          "green_stages": [
+            1,
+            2
+          ]
+        }
+      ]
+    },
+    {
+      "lane_id": 1,
+      "lane_number": 1,
+      "centerline_points": [
+        [
+          11,
+          1167
+        ],
+        [
+          1808,
+          1196
+        ],
+        [
+          3827,
+          1205
+        ]
+      ],
+      "spawn_enabled": true,
+      "num_points": 3,
+      "traffic_lights": [
+        {
+          "position": [
+            1813,
+            1199
+          ],
+          "green_stages": [
+            1,
+            2
+          ]
+        }
+      ]
+    },
+    {
+      "lane_id": 2,
+      "lane_number": 2,
+      "centerline_points": [
+        [
+          7,
+          1168
+        ],
+        [
+          156,
+          1170
+        ],
+        [
+          457,
+          1173
+        ],
+        [
+          702,
+          1180
+        ],
+        [
+          783,
+          1152
+        ],
+        [
+          884,
+          1157
+        ],
+        [
+          1031,
+          1155
+        ],
+        [
+          1324,
+          1155
+        ],
+        [
+          1623,
+          1160
+        ],
+        [
+          1891,
+          1157
+        ],
+        [
+          1961,
+          1122
+        ],
+        [
+          2004,
+          1082
+        ],
+        [
+          2050,
+          1029
+        ],
+        [
+          2060,
+          950
+        ],
+        [
+          2068,
+          15
+        ]
+      ],
+      "spawn_enabled": true,
+      "num_points": 15,
+      "traffic_lights": [
+        {
+          "position": [
+            1813,
+            1157
+          ],
+          "green_stages": [
+            2
+          ]
+        }
+      ]
+    },
+    {
+      "lane_id": 3,
+      "lane_number": 3,
+      "centerline_points": [
+        [
+          3830,
+          1155
+        ],
+        [
+          14,
+          1098
+        ]
+      ],
+      "spawn_enabled": true,
+      "num_points": 2,
+      "traffic_lights": [
+        {
+          "position": [
+            2128,
+            1124
+          ],
+          "green_stages": [
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "lane_id": 4,
+      "lane_number": 4,
+      "centerline_points": [
+        [
+          3830,
+          1155
+        ],
+        [
+          2126,
+          1132
+        ],
+        [
+          1254,
+          1117
+        ],
+        [
+          669,
+          1109
+        ],
+        [
+          477,
+          1107
+        ],
+        [
+          391,
+          1132
+        ],
+        [
+          12,
+          1132
+        ]
+      ],
+      "spawn_enabled": true,
+      "num_points": 7,
+      "traffic_lights": [
+        {
+          "position": [
+            2128,
+            1132
+          ],
+          "green_stages": [
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "lane_id": 5,
+      "lane_number": 5,
+      "centerline_points": [
+        [
+          3825,
+          1122
+        ],
+        [
+          19,
+          1064
+        ]
+      ],
+      "spawn_enabled": true,
+      "num_points": 2,
+      "traffic_lights": [
+        {
+          "position": [
+            2128,
+            1095
+          ],
+          "green_stages": [
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "lane_id": 6,
+      "lane_number": 6,
+      "centerline_points": [
+        [
+          3830,
+          1090
+        ],
+        [
+          2299,
+          1064
+        ],
+        [
+          2241,
+          1043
+        ],
+        [
+          2188,
+          1004
+        ],
+        [
+          2155,
+          956
+        ],
+        [
+          2114,
+          909
+        ],
+        [
+          2095,
+          861
+        ],
+        [
+          2107,
+          11
+        ]
+      ],
+      "spawn_enabled": true,
+      "num_points": 8,
+      "traffic_lights": [
+        {
+          "position": [
+            2228,
+            1033
+          ],
+          "green_stages": [
+            1,
+            2,
+            3
+          ]
+        }
+      ]
+    },
+    {
+      "lane_id": 7,
+      "lane_number": 7,
+      "centerline_points": [
+        [
+          1949,
+          9
+        ],
+        [
+          1942,
+          727
+        ],
+        [
+          1937,
+          799
+        ],
+        [
+          1928,
+          856
+        ],
+        [
+          1911,
+          921
+        ],
+        [
+          1873,
+          983
+        ],
+        [
+          1827,
+          999
+        ],
+        [
+          1748,
+          1031
+        ],
+        [
+          1667,
+          1050
+        ],
+        [
+          772,
+          1055
+        ],
+        [
+          685,
+          1069
+        ],
+        [
+          20,
+          1064
+        ]
+      ],
+      "spawn_enabled": true,
+      "num_points": 12,
+      "traffic_lights": [
+        {
+          "position": [
+            1900,
+            933
+          ],
+          "green_stages": [
+            1,
+            2,
+            3
+          ]
+        }
+      ]
+    },
+    {
+      "lane_id": 8,
+      "lane_number": 8,
+      "centerline_points": [
+        [
+          1990,
+          14
+        ],
+        [
+          1973,
+          940
+        ],
+        [
+          1973,
+          971
+        ],
+        [
+          1976,
+          1002
+        ],
+        [
+          1983,
+          1062
+        ],
+        [
+          1995,
+          1098
+        ],
+        [
+          2021,
+          1136
+        ],
+        [
+          2047,
+          1162
+        ],
+        [
+          2074,
+          1188
+        ],
+        [
+          2098,
+          1208
+        ],
+        [
+          2141,
+          1222
+        ],
+        [
+          2184,
+          1232
+        ],
+        [
+          3830,
+          1241
+        ]
+      ],
+      "spawn_enabled": true,
+      "num_points": 13,
+      "traffic_lights": [
+        {
+          "position": [
+            1970,
+            950
+          ],
+          "green_stages": [
+            3
+          ]
+        }
+      ]
+    },
+    {
+      "lane_id": 9,
+      "lane_number": 9,
+      "centerline_points": [
+        [
+          2026,
+          11
+        ],
+        [
+          2026,
+          55
+        ],
+        [
+          2028,
+          105
+        ],
+        [
+          2026,
+          141
+        ],
+        [
+          2009,
+          949
+        ],
+        [
+          2011,
+          988
+        ],
+        [
+          2014,
+          1031
+        ],
+        [
+          2023,
+          1066
+        ],
+        [
+          2045,
+          1105
+        ],
+        [
+          2062,
+          1124
+        ],
+        [
+          2088,
+          1148
+        ],
+        [
+          2119,
+          1169
+        ],
+        [
+          2167,
+          1181
+        ],
+        [
+          3830,
+          1196
+        ]
+      ],
+      "spawn_enabled": true,
+      "num_points": 14,
+      "traffic_lights": [
+        {
+          "position": [
+            2012,
+            954
+          ],
+          "green_stages": [
+            3
+          ]
+        }
+      ]
+    }
+  ],
+  "lane_connections": [
+    {
+      "source_lane_id": 0,
+      "target_lane_id": 1,
+      "points": [
+        [
+          93,
+          1200
+        ],
+        [
+          150,
+          1169
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 0,
+      "target_lane_id": 1,
+      "points": [
+        [
+          205,
+          1200
+        ],
+        [
+          282,
+          1167
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 0,
+      "target_lane_id": 1,
+      "points": [
+        [
+          452,
+          1210
+        ],
+        [
+          516,
+          1174
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 0,
+      "target_lane_id": 1,
+      "points": [
+        [
+          710,
+          1215
+        ],
+        [
+          765,
+          1174
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 0,
+      "target_lane_id": 1,
+      "points": [
+        [
+          968,
+          1217
+        ],
+        [
+          1028,
+          1184
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 0,
+      "target_lane_id": 1,
+      "points": [
+        [
+          1361,
+          1222
+        ],
+        [
+          1452,
+          1188
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 0,
+      "target_lane_id": 1,
+      "points": [
+        [
+          2241,
+          1227
+        ],
+        [
+          2337,
+          1196
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 8,
+      "target_lane_id": 1,
+      "points": [
+        [
+          2933,
+          1236
+        ],
+        [
+          3141,
+          1200
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 8,
+      "target_lane_id": 1,
+      "points": [
+        [
+          3464,
+          1239
+        ],
+        [
+          3543,
+          1210
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 1,
+      "target_lane_id": 0,
+      "points": [
+        [
+          117,
+          1167
+        ],
+        [
+          169,
+          1205
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 1,
+      "target_lane_id": 0,
+      "points": [
+        [
+          334,
+          1172
+        ],
+        [
+          406,
+          1208
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 1,
+      "target_lane_id": 0,
+      "points": [
+        [
+          669,
+          1177
+        ],
+        [
+          767,
+          1217
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 1,
+      "target_lane_id": 0,
+      "points": [
+        [
+          889,
+          1179
+        ],
+        [
+          980,
+          1220
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 1,
+      "target_lane_id": 0,
+      "points": [
+        [
+          1210,
+          1184
+        ],
+        [
+          1275,
+          1220
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 1,
+      "target_lane_id": 0,
+      "points": [
+        [
+          1528,
+          1186
+        ],
+        [
+          1617,
+          1222
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 1,
+      "target_lane_id": 8,
+      "points": [
+        [
+          2418,
+          1198
+        ],
+        [
+          2523,
+          1234
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 1,
+      "target_lane_id": 8,
+      "points": [
+        [
+          3028,
+          1200
+        ],
+        [
+          3169,
+          1236
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 1,
+      "target_lane_id": 2,
+      "points": [
+        [
+          717,
+          1174
+        ],
+        [
+          849,
+          1153
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 1,
+      "target_lane_id": 2,
+      "points": [
+        [
+          1098,
+          1184
+        ],
+        [
+          1203,
+          1162
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 1,
+      "target_lane_id": 2,
+      "points": [
+        [
+          1514,
+          1188
+        ],
+        [
+          1605,
+          1165
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 2,
+      "target_lane_id": 6,
+      "points": [
+        [
+          2059,
+          444
+        ],
+        [
+          2100,
+          337
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 3,
+      "target_lane_id": 5,
+      "points": [
+        [
+          3693,
+          1150
+        ],
+        [
+          3622,
+          1117
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 3,
+      "target_lane_id": 5,
+      "points": [
+        [
+          3136,
+          1143
+        ],
+        [
+          3028,
+          1107
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 3,
+      "target_lane_id": 5,
+      "points": [
+        [
+          1815,
+          1124
+        ],
+        [
+          1698,
+          1090
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 3,
+      "target_lane_id": 5,
+      "points": [
+        [
+          1169,
+          1112
+        ],
+        [
+          1069,
+          1078
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 3,
+      "target_lane_id": 5,
+      "points": [
+        [
+          366,
+          1100
+        ],
+        [
+          318,
+          1066
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 3,
+      "target_lane_id": 4,
+      "points": [
+        [
+          416,
+          1100
+        ],
+        [
+          325,
+          1133
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 5,
+      "target_lane_id": 6,
+      "points": [
+        [
+          3686,
+          1117
+        ],
+        [
+          3574,
+          1083
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 5,
+      "target_lane_id": 6,
+      "points": [
+        [
+          3377,
+          1112
+        ],
+        [
+          3267,
+          1078
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 5,
+      "target_lane_id": 3,
+      "points": [
+        [
+          3241,
+          1110
+        ],
+        [
+          3177,
+          1143
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 5,
+      "target_lane_id": 3,
+      "points": [
+        [
+          2772,
+          1105
+        ],
+        [
+          2650,
+          1136
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 5,
+      "target_lane_id": 3,
+      "points": [
+        [
+          1622,
+          1086
+        ],
+        [
+          1507,
+          1117
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 5,
+      "target_lane_id": 3,
+      "points": [
+        [
+          636,
+          1071
+        ],
+        [
+          478,
+          1102
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 6,
+      "target_lane_id": 5,
+      "points": [
+        [
+          3744,
+          1086
+        ],
+        [
+          3700,
+          1117
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 6,
+      "target_lane_id": 5,
+      "points": [
+        [
+          3131,
+          1076
+        ],
+        [
+          2999,
+          1107
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 6,
+      "target_lane_id": 2,
+      "points": [
+        [
+          2100,
+          433
+        ],
+        [
+          2064,
+          325
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 7,
+      "target_lane_id": 8,
+      "points": [
+        [
+          1947,
+          157
+        ],
+        [
+          1985,
+          224
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 7,
+      "target_lane_id": 8,
+      "points": [
+        [
+          1944,
+          509
+        ],
+        [
+          1978,
+          636
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 7,
+      "target_lane_id": 5,
+      "points": [
+        [
+          1473,
+          1050
+        ],
+        [
+          1401,
+          1083
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 7,
+      "target_lane_id": 5,
+      "points": [
+        [
+          978,
+          1050
+        ],
+        [
+          882,
+          1074
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 7,
+      "target_lane_id": 5,
+      "points": [
+        [
+          779,
+          1052
+        ],
+        [
+          724,
+          1074
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 8,
+      "target_lane_id": 7,
+      "points": [
+        [
+          1983,
+          279
+        ],
+        [
+          1944,
+          354
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 8,
+      "target_lane_id": 7,
+      "points": [
+        [
+          1978,
+          677
+        ],
+        [
+          1940,
+          722
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 8,
+      "target_lane_id": 1,
+      "points": [
+        [
+          2679,
+          1232
+        ],
+        [
+          2784,
+          1198
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 9,
+      "target_lane_id": 8,
+      "points": [
+        [
+          2028,
+          93
+        ],
+        [
+          1988,
+          143
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 9,
+      "target_lane_id": 8,
+      "points": [
+        [
+          2021,
+          413
+        ],
+        [
+          1980,
+          480
+        ]
+      ]
+    },
+    {
+      "source_lane_id": 9,
+      "target_lane_id": 8,
+      "points": [
+        [
+          2014,
+          767
+        ],
+        [
+          1973,
+          811
+        ]
+      ]
+    }
+  ]
+}

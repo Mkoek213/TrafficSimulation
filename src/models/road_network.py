@@ -55,7 +55,7 @@ class TrafficLights:
         """Indicates, that the TrafficLightsNode stage is going to change soon. For TrafficLights in state 'green' which are going to transition to 'red' it means state change to 'yelow' state. For the currently 'red' ones - no transition at all.
         Args:
             next_stage (int): Id of next stage. TrafficLights will change its state according to it."""
-        next_stage_state = 'green' if self.green_stages[next_stage] else 'red'
+        next_stage_state = 'green' if next_stage in self.green_stages else 'red'
         if self._state == 'green' and next_stage_state == 'red':
             self._state = 'yellow'
         # switching from red to green is not indicated earlier
@@ -66,7 +66,7 @@ class TrafficLights:
         Args:
             next_stage (int): Id of a next stage. TrafficLights will change its state according to it.
         """
-        self._state = 'green' if self.green_stages[next_stage] else 'red'
+        self._state = 'green' if next_stage in self.green_stages else 'red'
 
     def get_state(self):
         return self._state
@@ -94,21 +94,26 @@ class TrafficLightsNode:
         self._traffic_lights_instances = traffic_lights_instances.copy()
         self._stage_change_step = steps_per_stage
         self._stage_change_indication_step = steps_per_stage - steps_per_change_indication
-        stages = {}
+        stages = set()
         for traffic_lights in traffic_lights_instances:
             stages.update(traffic_lights.green_stages)
         self._cycle_stages = list(sorted(stages))
-
+        # Ensure at least one stage
+        if len(self._cycle_stages) == 0:
+            self._cycle_stages.append(0)
+            
         self._stage_counter = 0
         self._steps_counter = 0
         self._change_stage()
 
     def _change_stage(self):
         new_stage = self._cycle_stages[self._stage_counter]
+        print(f"TrafficLightsNode stage changed to: {new_stage}")
         for traffic_lights in self._traffic_lights_instances:
             traffic_lights.change_cycle_stage(new_stage)
 
     def _indicate_stage_change(self):
+        print("TrafficLightsNode stage changing")
         new_stage = self._cycle_stages[self._stage_counter]
         for traffic_lights in self._traffic_lights_instances:
             traffic_lights.indicate_stage_changing_soon(new_stage)
