@@ -157,14 +157,14 @@ class KraussModel:
         Returns:
             float: Speed in the next step of simulation.
         """
-        
+        if distance_to_traffic_lights > 80
         decel = -3*current_speed ** 2 / (2*distance_to_traffic_lights)
         decel = max(self.max_deceleration, decel) # both are negative
         result = current_speed + decel * dt
 
-        if result * dt > distance_to_traffic_lights:
+        if result * dt >= distance_to_traffic_lights:
             return 0.0
-        return result
+        return max(0, result)
     
     def calculate_next_speed(self, 
                            current_speed: float,

@@ -583,7 +583,7 @@ class TrafficSimulationModel(mesa.Model):
             road_id += 1
         
         # Create TrafficLightsNode
-        self.traffic_lights_node = TrafficLightsNode(created_traffic_lights, int(30 / self.time_step), int(10 / self.time_step))
+        self.traffic_lights_node = TrafficLightsNode(created_traffic_lights, int(30 / self.time_step), int(5 / self.time_step))
 
         # Create lane-changing connection lanes
         self._create_lane_change_connections(lane_data, image_to_world, road_id)

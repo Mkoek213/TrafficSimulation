@@ -30,6 +30,8 @@ class Vehicle(mesa.Agent):
     - Car-following behavior using Krauss model
     - Unique characteristics (max speed, acceleration, etc.)
     """
+
+    is_stopping_on_traffic_lights: bool
     
     def __init__(self, 
                  model: TrafficSimulationModel,
@@ -82,6 +84,8 @@ class Vehicle(mesa.Agent):
         
         # Route planning
         self.route_type = random.choice(['straight', 'left', 'right'])  # Desired route at intersection
+
+        self.is_stopping_on_traffic_lights = False
         
     def get_leader(self) -> Optional['Vehicle']:
         """
@@ -159,109 +163,31 @@ class Vehicle(mesa.Agent):
         # The safety margin is handled in the Krauss model instead
         return max(0.0, distance)
     
-    # def _estimate_acceleration(self) -> float:
-    #     """
-    #     Estimate current acceleration based on speed and distance to leader.
-        
-    #     Returns:
-    #         Estimated acceleration (m/s²)
-    #     """
-    #     leader = self.get_leader()
-    #     if leader is None:
-    #         # Free flow - accelerate towards max speed
-    #         if self.speed < self.target_speed:
-    #             return 2.0  # Max acceleration
-    #         return 0.0
-        
-    #     distance_to_leader = self.calculate_distance_to_leader()
-        
-    #     # Simple estimation
-    #     if distance_to_leader > 50:
-    #         # Plenty of space
-    #         speed_diff = leader.speed - self.speed
-    #         if speed_diff > 0:
-    #             return min(2.0, speed_diff * 0.1)
-    #         return 0.0
-    #     elif distance_to_leader < 20:
-    #         # Too close - need to brake
-    #         return -2.0
-        
-    #     # Normal following
-    #     if leader.speed < self.speed:
-    #         return -1.0
-    #     return 0.0
     
     def step(self):
         """
         Update the vehicle's state for one time step.
         """
         dt = self.model.time_step
-        
+        # Calculate leader speed constraint
         leader_based_speed = self._calculate_leader_based_desired_speed()
-        next_speed = leader_based_speed
-
-        # Take into account traffic lights
-        all_traffic_lights = self.model.get_traffic_lights_in_lane(self.lane_id)
+        
+        # Get traffic lights instance
+        all_traffic_lights: List[TrafficLights] = self.model.get_traffic_lights_in_lane(self.lane_id)
         all_traffic_lights.sort(key=lambda x: x.position)
         applicable_traffic_lights = next((x for x in all_traffic_lights if x.position > self.position), None)
 
-        traffic_lights_based_speed = next_speed
-
-        if applicable_traffic_lights is not None:
-            # Calculate distance to traffic lights
-            distance = applicable_traffic_lights.position - self.position
-
-            if distance < self.calculate_distance_to_leader():
-                # Calculate possible stopping distance
-                v_0 = self.speed
-                a = abs(self.krauss_model.max_deceleration) # non negative form
-                min_stopping_distance = v_0**2 / (2*a) # derived from v_0*t - 0.5*a*t**2 when t = v_0 / a
-
-                # if applicable_traffic_lights.get_state() == 'red' or applicable_traffic_lights.get_state() == 'yellow':
-                #     decel = self.speed ** 2 / (2*distance)
-                #     next_speed = self.speed - decel * dt
-                # print(f"stopping distance: {min_stopping_distance}")
-
-                # Handle the red light case
-                if applicable_traffic_lights.get_state() == 'red' and distance < min_stopping_distance * 3:
-                    # Brake to stop on the red lights
-                    traffic_lights_based_speed = self.krauss_model.calculate_traffic_lights_based_next_speed(
-                        self.speed,
-                        distance - self.length / 2,
-                        dt
-                    )
-                    # print(f"Stopping in front of {applicable_traffic_lights.get_state()} lights at distance {distance} and speed {traffic_lights_based_speed}")
-                # Else drive as fast as the leader allows
-
-                # Handle the yellow light case
-                necessary_time = distance / leader_based_speed # necessary time to reach traffic lights with leader-based speed
-                if applicable_traffic_lights.get_state() == 'yellow' and necessary_time > 3:
-                    # Brake to stop on the red light
-                    traffic_lights_based_speed = self.krauss_model.calculate_traffic_lights_based_next_speed(
-                        self.speed,
-                        distance - self.length,
-                        dt
-                    )
-                    print(f"Stopping in front of {applicable_traffic_lights.get_state()} lights at distance {distance} and speed {traffic_lights_based_speed}")
-
-                # Else drive as fast as the leader allows
-
-        # Determine provisional speed taking into account leader and traffic lights
-        provisional_speed = min(next_speed, traffic_lights_based_speed)
-
-        # If approaching a red traffic light, ensure we stop before its position
-        if applicable_traffic_lights is not None and applicable_traffic_lights.get_state() == 'red':
-            tl_pos = applicable_traffic_lights.position
-            # stop line set a bit before the light (half vehicle length + small buffer)
-            stop_buffer = 2.0
-            stop_line = tl_pos - (self.length / 2.0) - stop_buffer
-            # Projected next position with provisional speed
-            projected_next = self._calculate_position_update(self.position, provisional_speed, dt)
-            # If we would pass the stop line in next step, set speed to zero to stop before it
-            if projected_next >= stop_line and self.position < stop_line:
-                provisional_speed = 0.0
-
-        self.speed = provisional_speed
+        # Take into account traffic lights
+        self._determine_if_stopping_on_traffic_lights(leader_based_speed, applicable_traffic_lights)
+        
+        if self.is_stopping_on_traffic_lights: 
+            self.speed = self.krauss_model.calculate_traffic_lights_based_next_speed(
+                self.speed,
+                applicable_traffic_lights.position - self.position - self.length / 2,
+                dt
+            )
+        else: # If not stopping on traffic lights
+            self.speed = leader_based_speed
 
         # Update position
         next_position = self._calculate_position_update(
@@ -307,6 +233,37 @@ class Vehicle(mesa.Agent):
             # If transition was successful, position was already set in _try_lane_transition()
         else:
             self.position = next_position
+
+    def _determine_if_stopping_on_traffic_lights(self, leader_based_speed: float, applicable_traffic_lights: TrafficLights):
+
+        # If no traffic lights in front of, do not stop
+        if applicable_traffic_lights is None:
+            self.is_stopping_on_traffic_lights = False
+            return
+        
+        # Calculate distance to traffic lights
+        distance = applicable_traffic_lights.position - self.position
+
+        # Calculate possible stopping distance
+        v_0 = self.speed
+        a = abs(self.krauss_model.max_deceleration) # non negative form
+        min_stopping_distance = v_0**2 / (2*a) # derived from v_0*t - 0.5*a*t**2 when t = v_0 / a
+
+        # Handle the red light case
+        if applicable_traffic_lights.get_state() == 'red' and distance < min_stopping_distance * 1.5:
+            self.is_stopping_on_traffic_lights = True
+            return
+
+        # Handle the yellow light case
+        necessary_time = distance / leader_based_speed # necessary time to reach traffic lights with leader-based speed
+        if applicable_traffic_lights.get_state() == 'yellow' and necessary_time > 3:
+            self.is_stopping_on_traffic_lights = True
+            return
+        
+        # Handle the green light case
+        if applicable_traffic_lights.get_state() == 'green':
+            self.is_stopping_on_traffic_lights = False
+            return
 
     def _calculate_leader_based_desired_speed(self) -> float:
 
