@@ -183,8 +183,29 @@ class TrafficVisualizer:
         
         # Setup video writer
         height, width = self.image.shape[:2]
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        
+        # Use H.264 codec for better compatibility (especially on macOS)
+        # Try different codecs in order of preference
+        import platform
+        system = platform.system()
+        
+        if system == "Darwin":  # macOS
+            # H.264 codec works best on macOS
+            fourcc = cv2.VideoWriter_fourcc(*'avc1')
+        else:
+            # For Linux/Windows, try H.264 first, fallback to mp4v
+            fourcc = cv2.VideoWriter_fourcc(*'H264')
+        
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        
+        # Check if video writer was opened successfully
+        if not out.isOpened():
+            print("⚠️  Warning: H.264 codec failed, trying MJPG...")
+            fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+            # Change extension to .avi for MJPG
+            if output_path.endswith('.mp4'):
+                output_path = output_path[:-4] + '.avi'
+            out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
         
         # Render frames
         frames = range(start_frame, end_frame + 1, frame_skip)
@@ -199,6 +220,7 @@ class TrafficVisualizer:
         
         out.release()
         print(f"\n✅ Video saved: {output_path}")
+        print(f"   Codec: {'H.264 (avc1)' if system == 'Darwin' else 'H.264/MJPG'}")
     
     def show_frame_interactive(self, frame_num: int, show_trails: bool = True, save_path: str = None):
         """

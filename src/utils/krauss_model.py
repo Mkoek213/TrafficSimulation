@@ -58,6 +58,11 @@ class KraussModel:
         """
         Calculate the safe speed based on distance to leading vehicle.
         
+        This uses a smooth approach where vehicles:
+        1. Maintain speed matching when following at desired gap
+        2. Gradually adjust speed based on gap error
+        3. Avoid sudden acceleration/deceleration
+        
         Args:
             current_speed: Current speed of the vehicle (m/s)
             distance_to_leader: Distance to leading vehicle (m)
@@ -69,36 +74,83 @@ class KraussModel:
         if distance_to_leader <= 0:
             return 0.0
         
-        # Safe speed calculation: v_safe = v_leader + (gap - desired_gap - v_leader * reaction_time) / reaction_time
-        # This ensures the vehicle can stop safely if the leader stops suddenly
-        # But also consider that we shouldn't exceed the leader's speed by too much
+        # Calculate desired gap (space we want to maintain)
         desired_gap = self._calculate_desired_gap(leader_speed)
-        safe_speed = leader_speed + (distance_to_leader - desired_gap - leader_speed * self.reaction_time) / self.reaction_time
         
-        # Additional constraint: don't exceed leader speed by more than a reasonable amount
-        max_speed_above_leader = leader_speed + 5.0  # Don't exceed leader by more than 5 m/s
-        safe_speed = min(safe_speed, max_speed_above_leader)
+        # Gap error: positive = too far, negative = too close
+        gap_error = distance_to_leader - desired_gap
         
-        # More lenient safe distance - allow closer following
-        min_safe_distance = 10.0  # meters - allow closer following (reduced from 15.0)
-        # if distance_to_leader < min_safe_distance:
-        #     # Gradual speed reduction instead of sudden cut
-        #     speed_reduction_factor = max(0.8, distance_to_leader / min_safe_distance)
-        #     safe_speed = min(safe_speed, leader_speed * speed_reduction_factor)
+        # Base safe speed: match leader's speed
+        safe_speed = leader_speed
+        
+        # Adjust based on gap error with smooth proportional control
+        # If gap is too large, we can go faster (but not too much faster)
+        # If gap is too small, we need to slow down
+        gap_control_gain = 0.3  # How aggressively to correct gap (lower = smoother, was 0.5)
+        speed_adjustment = gap_control_gain * gap_error / self.reaction_time
+        
+        # Limit speed adjustment to avoid jerky behavior
+        max_adjustment = 2.0  # m/s maximum adjustment per calculation (was 3.0)
+        speed_adjustment = np.clip(speed_adjustment, -max_adjustment, max_adjustment)
+        
+        safe_speed = leader_speed + speed_adjustment
+        
+        # Safety limits:
+        # 1. Don't go faster than leader + reasonable margin when close
+        if distance_to_leader < desired_gap * 1.5:
+            max_speed_above_leader = leader_speed + 2.0  # Only 2 m/s above when close
+            safe_speed = min(safe_speed, max_speed_above_leader)
+        else:
+            # More room = can go faster
+            max_speed_above_leader = leader_speed + 5.0
+            safe_speed = min(safe_speed, max_speed_above_leader)
+        
+        # 2. Start decelerating earlier when approaching slower leader
+        # Calculate "anticipation distance" - how far ahead to start adjusting speed
+        anticipation_distance = desired_gap * 2.0  # Start reacting 2x the desired gap away
+        
+        if distance_to_leader < anticipation_distance:
+            # We're getting close - adjust speed more aggressively
+            # The closer we get, the more we match the leader's speed
+            closeness_factor = 1.0 - (distance_to_leader / anticipation_distance)  # 0 = far, 1 = very close
+            
+            # Blend between proportional control and direct speed matching
+            # When close, match leader speed more directly
+            speed_blend = (1.0 - closeness_factor) * safe_speed + closeness_factor * leader_speed
+            safe_speed = speed_blend
+        
+        # 3. Emergency braking if critically close
+        critical_gap = self.desired_stop_gap + 5.0  # Critical distance
+        if distance_to_leader < critical_gap:
+            # Proportional braking based on how close we are
+            emergency_factor = max(0.0, distance_to_leader / critical_gap)
+            safe_speed = min(safe_speed, leader_speed * emergency_factor)
         
         # Ensure safe speed is not negative
         return max(0.0, safe_speed)
     
     def _calculate_desired_gap(self, leader_speed: float) -> float:
         """Calculate desired gap at given leader speed.
+        
+        Uses the safe distance formula: gap = stop_gap + speed * time_headway
+        This ensures vehicles maintain a time-based following distance.
 
         Args:
             leader_speed (float): Speed of leader at the moment.
 
         Returns:
-            float: Desired speed in in conditions.
+            float: Desired gap distance in meters.
         """
-        return leader_speed * self.reaction_time * 1.2
+        # Time headway: how many seconds of travel distance to maintain
+        # Increased to 7.0 seconds - 2X BIGGER GAPS
+        time_headway = 7.0  # seconds (2x from 3.5)
+        
+        # Minimum stop gap - 2X BIGGER GAPS
+        min_stop_gap = max(self.desired_stop_gap, 10)  # At least 10m when stopped
+        
+        # Desired gap = minimum stop gap + speed-dependent spacing
+        desired_gap = min_stop_gap + leader_speed * time_headway
+        return desired_gap
     
     def calculate_desired_speed(self, 
                               current_speed: float,
@@ -148,23 +200,56 @@ class KraussModel:
     
     def calculate_traffic_lights_based_next_speed(self, current_speed: float, distance_to_traffic_lights: float, dt: float) -> float:
         """Calculate next speed based on distance to traffic lights in state 'red'.
+        
+        Uses smooth deceleration profile to gradually stop at the light.
 
         Args:
             current_speed (float): Current car speed.
-            distance_to_traffic_lights (float): Distance to traffic lights.
+            distance_to_traffic_lights (float): Distance from front bumper to traffic lights.
             dt (float): Time step in traffic model.
 
         Returns:
             float: Speed in the next step of simulation.
         """
-        if distance_to_traffic_lights > 80
-        decel = -3*current_speed ** 2 / (2*distance_to_traffic_lights)
-        decel = max(self.max_deceleration, decel) # both are negative
-        result = current_speed + decel * dt
-
-        if result * dt >= distance_to_traffic_lights:
+        # Start decelerating well before the light for SMOOTH, EARLY stopping
+        # Scale with speed - faster vehicles need more distance
+        deceleration_start_distance = max(200.0, current_speed * 4.0)  # At least 200m, or 4 seconds at current speed (was 120m/2s)
+        
+        if distance_to_traffic_lights > deceleration_start_distance:
+            return current_speed  # Far enough, maintain speed
+        
+        # Already very close - stop completely
+        if distance_to_traffic_lights < 5.0:
             return 0.0
-        return max(0, result)
+        
+        # Use GENTLE deceleration for smooth stopping
+        # Calculate required deceleration to reach near-zero speed at the light
+        # Using kinematic equation: v² = u² + 2as, solving for a: a = (v² - u²) / (2s)
+        target_speed_at_light = 0.0  # Come to complete stop
+        
+        # Calculate required deceleration (negative value)
+        if distance_to_traffic_lights > 0.1:
+            required_decel = -(current_speed**2 - target_speed_at_light**2) / (2 * distance_to_traffic_lights)
+        else:
+            required_decel = self.max_deceleration  # Emergency stop
+        
+        # Use gentler deceleration for smoother stopping
+        # Limit to comfortable deceleration instead of max
+        comfortable_decel = -3.0  # m/s² - gentle braking (was using max_deceleration)
+        
+        # Use the gentler of: required or comfortable deceleration
+        # (both are negative, so we want the less negative one = smoother)
+        decel = max(required_decel, comfortable_decel)
+        
+        # Only use harder braking if we're getting too close
+        if distance_to_traffic_lights < 30.0:
+            # Emergency zone - use required deceleration
+            decel = max(required_decel, self.max_deceleration)
+        
+        # Apply deceleration
+        new_speed = current_speed + decel * dt
+        
+        return max(0.0, new_speed)
     
     def calculate_next_speed(self, 
                            current_speed: float,

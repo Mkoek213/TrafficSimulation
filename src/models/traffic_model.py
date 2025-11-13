@@ -34,7 +34,7 @@ class TrafficSimulationModel(mesa.Model):
                  height: int = 1000,
                  time_step: float = 0.1,  # seconds
                  vehicle_spawn_rate: float = 0.5,  # vehicles per second (more frequent spawning)
-                 max_vehicles: int = 150,
+                 max_vehicles: int = 75,
                  custom_lanes_path: Optional[str] = None,
                  model_boost: float = 10):
         """
@@ -90,6 +90,8 @@ class TrafficSimulationModel(mesa.Model):
             self._create_custom_road_network(custom_lanes_path)
         else:
             self._create_test_road_network()
+            # Initialize empty traffic lights node for test network
+            self.traffic_lights_node = None
         
         # Spawn vehicles gradually over time
         self._spawn_initial_vehicles()
@@ -584,6 +586,7 @@ class TrafficSimulationModel(mesa.Model):
         
         # Create TrafficLightsNode
         self.traffic_lights_node = TrafficLightsNode(created_traffic_lights, int(30 / self.time_step), int(5 / self.time_step))
+        print(f"✅ Created {len(created_traffic_lights)} traffic lights")
 
         # Create lane-changing connection lanes
         self._create_lane_change_connections(lane_data, image_to_world, road_id)
@@ -1287,7 +1290,7 @@ class TrafficSimulationModel(mesa.Model):
         vehicle_length = 4.5
         vehicle_width = 2.0
         spawn_max_extent = np.sqrt((vehicle_length/2)**2 + (vehicle_width/2)**2)
-        safety_margin = 15.0  # Large margin so new spawns respect bigger gaps
+        safety_margin = 100.0  # 2X BIGGER - 30m margin (was 15m)
         
         for vehicle in self.vehicles:
             veh_x, veh_y = vehicle.get_visual_position()
@@ -1354,22 +1357,21 @@ class TrafficSimulationModel(mesa.Model):
         vehicle_id = self.vehicle_counter
         self.vehicle_counter += 1
         
-        # Random vehicle properties - various speeds (some fast, some slower)
-        # Speeds are multiplied by 10 for 10x faster movement (much faster for demos)
+        # Random vehicle properties - realistic speeds
         # Create more variation: 60% fast, 30% medium, 10% slow
         speed_roll = random.random()
         if speed_roll < 0.6:
-            # Fast vehicles (highway speeds) - 10x faster
-            max_speed = random.uniform(25.0, 35.0) * self.model_boost  # m/s (900-1260 km/h equivalent)
+            # Fast vehicles (highway speeds)
+            max_speed = random.uniform(25.0, 35.0)  # m/s (90-126 km/h)
         elif speed_roll < 0.9:
-            # Medium speed vehicles (city speeds) - 10x faster
-            max_speed = random.uniform(15.0, 22.0) * self.model_boost  # m/s (540-790 km/h equivalent)
+            # Medium speed vehicles (city speeds)
+            max_speed = random.uniform(15.0, 22.0)  # m/s (54-79 km/h)
         else:
-            # Slow vehicles (traffic/slow drivers) - 10x faster
-            max_speed = random.uniform(10.0, 15.0)  * self.model_boost  # m/s (360-540 km/h equivalent)
+            # Slow vehicles (traffic/slow drivers)
+            max_speed = random.uniform(10.0, 15.0)  # m/s (36-54 km/h)
         
-        max_acceleration = random.uniform(2.5 * self.model_boost, 4.0 * self.model_boost)  # m/s² (varied acceleration)
-        max_deceleration = random.uniform(-4.0 * self.model_boost, -6.0 * self.model_boost)  # m/s² (varied braking)
+        max_acceleration = random.uniform(2.5, 4.0)  # m/s² (varied acceleration)
+        max_deceleration = random.uniform(-4.0, -6.0)  # m/s² (varied braking)
         
         # Random color - but default to yellow for visibility
         color = (255, 220, 0)  # Yellow by default (like in the image)
@@ -1405,7 +1407,7 @@ class TrafficSimulationModel(mesa.Model):
             max_speed=max_speed,
             max_acceleration=max_acceleration,
             max_deceleration=max_deceleration,
-            color=color
+            color=color,
         )
         
         # Add to simulation
@@ -1721,8 +1723,9 @@ class TrafficSimulationModel(mesa.Model):
             self._spawn_vehicle()
             self.spawn_timer = 0.0
 
-        # Update traffic lights
-        self.traffic_lights_node.step()
+        # Update traffic lights (if they exist - only for custom road networks)
+        if hasattr(self, 'traffic_lights_node') and self.traffic_lights_node is not None:
+            self.traffic_lights_node.step()
 
         # Update all agents
         self.vehicle_agents.do("step")

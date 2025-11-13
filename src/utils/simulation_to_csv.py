@@ -191,9 +191,13 @@ class SimulationToCSVConverter:
         # Calculate steps per frame to achieve target FPS
         # If fps = 8, time per frame = 1/8 = 0.125 seconds
         # If time_step = 0.1, steps_per_frame = 0.125 / 0.1 = 1.25
-        # Round to nearest integer
+        # Round to nearest integer, then multiply by speedup factor
         time_per_frame = 1.0 / frames_per_second
-        steps_per_frame = max(1, round(time_per_frame / dt_per_frame_float))
+        base_steps_per_frame = max(1, round(time_per_frame / dt_per_frame_float))
+        
+        # Speed up simulation by running 20x more steps per frame
+        speedup_factor = 20  # Increased from 10 to 20 for faster simulation
+        steps_per_frame = base_steps_per_frame * speedup_factor
         
         print(f"  Target FPS: {frames_per_second} (time per frame: {time_per_frame:.3f}s)")
         print(f"  Simulation time_step: {dt_per_frame_float}s")
