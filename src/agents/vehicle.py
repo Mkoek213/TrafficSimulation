@@ -32,6 +32,8 @@ class Vehicle(mesa.Agent):
     """
 
     is_stopping_on_traffic_lights: bool
+    current_acceleration: float # may be nagative
+    reaction_time_counter: float
     
     def __init__(self, 
                  model: TrafficSimulationModel,
@@ -63,6 +65,7 @@ class Vehicle(mesa.Agent):
         """
         super().__init__(model)
         self.model = cast('TrafficSimulationModel', model)
+        self.unique_id = unique_id
         
         # Physical properties
         self.length = length
@@ -86,6 +89,8 @@ class Vehicle(mesa.Agent):
         self.route_type = random.choice(['straight', 'left', 'right'])  # Desired route at intersection
 
         self.is_stopping_on_traffic_lights = False
+        self.current_acceleration = 0.0
+        self.reaction_time_counter = 0.0
         
     def get_leader(self) -> Optional['Vehicle']:
         """
@@ -140,7 +145,7 @@ class Vehicle(mesa.Agent):
     
     def calculate_distance_to_leader(self) -> float:
         """
-        Calculate distance to the leading vehicle (bumper-to-bumper gap).
+        Calculate distance to the leading vehicle.
         
         Returns:
             Distance to leader in meters, or float('inf') if no leader
@@ -149,20 +154,18 @@ class Vehicle(mesa.Agent):
         if leader is None:
             return float('inf')
         
-        # Distance is the gap between vehicles (front bumper to rear bumper)
-        # Front of this vehicle = self.position + self.length/2
-        # Rear of leader = leader.position - leader.length/2
-        # Gap = (leader.position - leader.length/2) - (self.position + self.length/2)
-        
+        # Distance is the gap between vehicles
+        # Account for vehicle positions along the lane
         if leader.position > self.position:
             # Leader is ahead
-            # Gap = leader_rear - self_front
-            distance = leader.position - self.position - (leader.length + self.length) / 2
+            distance = leader.position - self.position - leader.length
         else:
             # Leader wrapped around (behind us in position but ahead on lane)
             lane_length = self.model.get_lane_length(self.lane_id)
-            distance = (lane_length - self.position) + leader.position - (leader.length + self.length) / 2
+            distance = (lane_length - self.position) + leader.position - leader.length
         
+        # Don't subtract safety margin here - it causes false collision detection
+        # The safety margin is handled in the Krauss model instead
         return max(0.0, distance)
     
     
@@ -171,8 +174,12 @@ class Vehicle(mesa.Agent):
         Update the vehicle's state for one time step.
         """
         dt = self.model.time_step
+
+        # Calculate distance to leader
+        distance_to_leader = self.calculate_distance_to_leader()
+
         # Calculate leader speed constraint
-        leader_based_speed = self._calculate_leader_based_desired_speed()
+        leader_based_speed = self._calculate_leader_based_desired_speed(distance_to_leader)
         
         # Get traffic lights instance
         all_traffic_lights: List[TrafficLights] = self.model.get_traffic_lights_in_lane(self.lane_id)
@@ -180,16 +187,41 @@ class Vehicle(mesa.Agent):
         applicable_traffic_lights = next((x for x in all_traffic_lights if x.position > self.position), None)
 
         # Take into account traffic lights
-        self._determine_if_stopping_on_traffic_lights(leader_based_speed, applicable_traffic_lights)
+        # self._determine_if_stopping_on_traffic_lights(distance_to_leader, leader_based_speed, applicable_traffic_lights)
         
-        if self.is_stopping_on_traffic_lights: 
-            self.speed = self.krauss_model.calculate_traffic_lights_based_next_speed(
-                self.speed,
-                applicable_traffic_lights.position - self.position - self.length / 2,
-                dt
-            )
-        else: # If not stopping on traffic lights
+        # if self.is_stopping_on_traffic_lights: 
+        #     self.speed = self.krauss_model.calculate_traffic_lights_based_next_speed(
+        #         self.speed,
+        #         applicable_traffic_lights.position - self.position - self.length / 2,
+        #         dt
+        #     )
+        # else: # If not stopping on traffic lights
+        #     self.speed = leader_based_speed
+        current_speed = self.speed
+        print(f"leader_based_speed: {leader_based_speed}")
+
+        if applicable_traffic_lights is not None:
+
+            distance_to_traffic_lights = applicable_traffic_lights.position - self.position - self.length / 2
+            # traffic_lights_based_speed = self.krauss_model.calculate_traffic_lights_based_next_speed(
+            #         self.speed,
+            #         distance_to_traffic_lights,
+            #         dt
+            #     )
+            traffic_lights_based_speed = self.krauss_model.calculate_next_speed(
+            self.speed,
+            distance_to_traffic_lights - self.length / 2 - 3,
+            self.model.time_step,
+            0
+        )
+
+        
+            self.speed = min(leader_based_speed, traffic_lights_based_speed)
+            print(f"(veh: {self.unique_id}) traffic lights: distance: {distance_to_traffic_lights}, tl-based speed: {traffic_lights_based_speed}, speed: {self.speed}")
+        else: # No traffic lights in front of
+            leader_speed = self.get_leader().speed if self.get_leader() is not None else "None"
             self.speed = leader_based_speed
+            print(f"(veh: {self.unique_id}) leader: distance: {distance_to_leader}, speed(l/f): {leader_speed}/{self.speed}, next_speed: {current_speed}")
 
         # Update position
         next_position = self._calculate_position_update(
@@ -202,6 +234,7 @@ class Vehicle(mesa.Agent):
         collision_detected = self._check_collision_after_move(next_position)
         
         if collision_detected:
+            print("colision detected")
             # Collision ahead (including overlapping lanes) – wait in place
             self.speed = 0
             return
@@ -236,68 +269,63 @@ class Vehicle(mesa.Agent):
         else:
             self.position = next_position
 
-    def _determine_if_stopping_on_traffic_lights(self, leader_based_speed: float, applicable_traffic_lights: TrafficLights):
+    def _determine_if_stopping_on_traffic_lights(self, distance_to_leader: int, leader_based_speed: float, applicable_traffic_lights: TrafficLights):
 
         # If no traffic lights in front of, do not stop
         if applicable_traffic_lights is None:
             self.is_stopping_on_traffic_lights = False
             return
         
-        # Calculate distance to traffic lights (from front bumper of vehicle)
-        distance = applicable_traffic_lights.position - self.position - self.length / 2
-        
-        # If we've already passed the light, don't stop
-        if distance < 0:
+        # Calculate distance to traffic lights
+        distance = applicable_traffic_lights.position - self.position
+
+        # Calculate leader possible stopping distance
+        v_0_l = self.speed
+        a_l = abs(self.krauss_model.max_deceleration) # non negative form
+        min_leader_stopping_distance = v_0_l**2 / (2*a_l) # derived from v_0*t - 0.5*a*t**2 when t = v_0 / a
+
+        # If leader is able to stop and is before traffic lights
+        if min_leader_stopping_distance < distance - distance_to_leader and distance_to_leader < distance:
+            # Do not try to stop on traffic lights on your own - stop with the leader
             self.is_stopping_on_traffic_lights = False
             return
 
-        # Handle the green light case - always allow passage
-        light_state = applicable_traffic_lights.get_state()
-        
-        if light_state == 'green':
-            self.is_stopping_on_traffic_lights = False
+        # Calculate possible stopping distance
+        v_0 = self.speed
+        a = abs(self.krauss_model.max_deceleration) # non negative form
+        min_stopping_distance = v_0**2 / (2*a) # derived from v_0*t - 0.5*a*t**2 when t = v_0 / a
+
+        # Handle the red light case
+        if applicable_traffic_lights.get_state() == 'red' and distance < min_stopping_distance * 1.5:
+            self.is_stopping_on_traffic_lights = True
+            return
+
+        # Handle the yellow light case
+        necessary_time = distance / leader_based_speed # necessary time to reach traffic lights with leader-based speed
+        if applicable_traffic_lights.get_state() == 'yellow' and necessary_time > 3:
+            self.is_stopping_on_traffic_lights = True
             return
         
-        # For red and yellow lights, start decelerating EARLY for smooth stopping
-        deceleration_start_distance = 200.0  # Start slowing down 200m before light (was 120m)
-        
-        # Handle the red light case - start decelerating when within range
-        if light_state == 'red':
-            if distance < deceleration_start_distance:
-                self.is_stopping_on_traffic_lights = True
-                return
+        # Handle the green light case
+        if applicable_traffic_lights.get_state() == 'green':
+            self.is_stopping_on_traffic_lights = False
+            return
 
-        # Handle the yellow light case - if we can't make it through, start stopping
-        if light_state == 'yellow':
-            # If close enough that we can't comfortably pass before it turns red
-            if distance < deceleration_start_distance:
-                # Calculate time to reach light at current speed
-                if leader_based_speed > 0:
-                    time_to_light = distance / leader_based_speed
-                    # If it takes more than 3 seconds, better stop
-                    if time_to_light > 3.0:
-                        self.is_stopping_on_traffic_lights = True
-                        return
-        
-        # Default: don't stop
-        self.is_stopping_on_traffic_lights = False
-
-    def _calculate_leader_based_desired_speed(self) -> float:
-
-        # Calculate distance to leader (already accounts for vehicle lengths - bumper to bumper)
-        distance_to_leader = self.calculate_distance_to_leader()
+    def _calculate_leader_based_desired_speed(self, distance_to_leader: float) -> float:
         
         # Get leader speed
         leader_speed = None
         leader = self.get_leader()
+        leader_length = self.length
         if leader is not None:
             leader_speed = leader.speed
+            leader_length = leader.length
         
         # Calculate next speed using Krauss model
-        # Pass the bumper-to-bumper distance directly (don't subtract lengths again!)
+        # The Krauss model already handles safe speed calculation
         next_speed = self.krauss_model.calculate_next_speed(
             self.speed,
-            distance_to_leader,  # Already bumper-to-bumper distance
+            distance_to_leader - 5 * self.length / 2 - 5 * leader_length / 2,
             self.model.time_step,
             leader_speed
         )
@@ -436,11 +464,7 @@ class Vehicle(mesa.Agent):
             other_world_x, other_world_y = vehicle.get_visual_position()
             other_angle = vehicle.get_visual_angle()
             center_dist = np.sqrt((new_world_x - other_world_x)**2 + (new_world_y - other_world_y)**2)
-            
-            # Calculate minimum safe distance between vehicle centers
-            # This is: half of each vehicle's length + safety buffer
-            # This ensures bumpers don't touch
-            min_center_gap = (self.length / 2 + vehicle.length / 2) + 30.0  # 2X BIGGER - 30m buffer (was 15m)
+            min_center_gap = (self.length + vehicle.length) / 2
             if center_dist < min_center_gap:
                 return True
             
@@ -478,9 +502,8 @@ class Vehicle(mesa.Agent):
         max_extent1 = np.sqrt((l1/2)**2 + (w1/2)**2)
         max_extent2 = np.sqrt((l2/2)**2 + (w2/2)**2)
         
-        # Safety margin to prevent bounding box collisions
-        # Large margin to ensure visible gap between vehicles
-        safety_margin = 30  # 2X BIGGER - 30m minimum gap (was 15m)
+        # Safety margin to prevent bounding box collisions - expanded for wider spacing
+        safety_margin = 0.5  # meters
         
         # If distance between centers is less than sum of extents + safety margin, collision
         if center_dist < max_extent1 + max_extent2 + safety_margin:

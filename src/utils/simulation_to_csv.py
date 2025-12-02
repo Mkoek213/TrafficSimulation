@@ -36,10 +36,7 @@ class SimulationToCSVConverter:
                  model: TrafficSimulationModel,
                  image_width: int = 1920,
                  image_height: int = 1080,
-                 world_bounds: Optional[Tuple[float, float, float, float]] = None,
-                 offset_x: float = 0.0,
-                 offset_y: float = 0.0,
-                 scale: float = 1.0):
+                 world_bounds: Optional[Tuple[float, float, float, float]] = None):
         """
         Initialize the converter.
         
@@ -64,9 +61,9 @@ class SimulationToCSVConverter:
         else:
             self.world_bounds = world_bounds
         
-        self.offset_x = offset_x
-        self.offset_y = offset_y
-        self.scale = scale
+        self.offset_x = model.offset_x
+        self.offset_y = model.offset_y
+        self.scale = model.scale
         
         # Vehicle dimensions (in meters) - typical car dimensions
         self.default_length = 4.5  # meters
@@ -76,8 +73,8 @@ class SimulationToCSVConverter:
         # Position scale: small (0.3507 px/m) to fit roads within image bounds
         # Bounding box scale: larger (~14 px/m) to match real data sizes and make cars visible
         # Real data shows cars ~60-70 pixels for 4.5m length = ~14 px/m
-        self.position_scale = scale  # For coordinate transformation (keeps vehicles in bounds)
-        self.bbox_pixels_per_meter = 14.0  # For bounding box size (makes cars visible)
+        self.position_scale = model.scale  # For coordinate transformation (keeps vehicles in bounds)
+        self.bbox_pixels_per_meter = model.scale  # For bounding box size (makes cars visible)
         
         # Frame counter
         self.current_frame = 0
@@ -191,13 +188,9 @@ class SimulationToCSVConverter:
         # Calculate steps per frame to achieve target FPS
         # If fps = 8, time per frame = 1/8 = 0.125 seconds
         # If time_step = 0.1, steps_per_frame = 0.125 / 0.1 = 1.25
-        # Round to nearest integer, then multiply by speedup factor
+        # Round to nearest integer
         time_per_frame = 1.0 / frames_per_second
-        base_steps_per_frame = max(1, round(time_per_frame / dt_per_frame_float))
-        
-        # Speed up simulation by running 20x more steps per frame
-        speedup_factor = 20  # Increased from 10 to 20 for faster simulation
-        steps_per_frame = base_steps_per_frame * speedup_factor
+        steps_per_frame = max(1, round(time_per_frame / dt_per_frame_float))
         
         print(f"  Target FPS: {frames_per_second} (time per frame: {time_per_frame:.3f}s)")
         print(f"  Simulation time_step: {dt_per_frame_float}s")

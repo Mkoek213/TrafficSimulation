@@ -82,7 +82,8 @@ Examples:
         time_step=args.time_step,
         vehicle_spawn_rate=args.spawn_rate,
         max_vehicles=args.max_vehicles,
-        custom_lanes_path=args.custom_lanes
+        custom_lanes_path=args.custom_lanes,
+        model_boost=1
     )
     
     print(f"✓ Created road network with {len(model.road_network.all_lanes)} lanes")
@@ -94,10 +95,7 @@ Examples:
     converter = SimulationToCSVConverter(
         model=model,
         image_width=args.image_width,
-        image_height=args.image_height,
-        offset_x=args.offset_x,
-        offset_y=args.offset_y,
-        scale=args.scale
+        image_height=args.image_height
     )
     
     print(f"✓ World bounds: {converter.world_bounds}")
