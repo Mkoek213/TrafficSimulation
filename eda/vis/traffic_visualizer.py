@@ -101,11 +101,31 @@ class TrafficVisualizer:
                         cv2.line(img, tuple(points[i]), tuple(points[i+1]), 
                                faded_color, 2, cv2.LINE_AA)
         
-        # Draw current bounding boxes
+        # Draw current bounding boxes and traffic lights
         for _, row in frame_data.iterrows():
+            # Traffic lights (class_id == 2) are drawn as simple colored circles
+            class_id = int(row['class_id']) if 'class_id' in row and not pd.isna(row['class_id']) else 1
+            if class_id == 2:
+                state = row['tl_state'] if 'tl_state' in row and not pd.isna(row['tl_state']) else None
+                if state == 'green':
+                    tl_color = (0, 255, 0)
+                elif state == 'yellow':
+                    tl_color = (255, 255, 0)
+                else:
+                    tl_color = (255, 0, 0)
+
+                center = (int(row['center_x']), int(row['center_y']))
+                # Draw outer white border and colored center
+                cv2.circle(img, center, 9, (255, 255, 255), -1)
+                cv2.circle(img, center, 6, tl_color, -1)
+                # Label as TL
+                cv2.putText(img, "TL", (center[0] + 12, center[1] - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
+                continue
+
             track_id = row['track_id']
             color = self.track_colors.get(track_id, (255, 255, 255))
-            
+
             # Draw rotated bounding box using 4 corners
             corners = np.array([
                 [row['x1'], row['y1']],
@@ -113,19 +133,19 @@ class TrafficVisualizer:
                 [row['x3'], row['y3']],
                 [row['x4'], row['y4']]
             ], dtype=np.int32)
-            
+
             # Draw filled polygon with transparency
             overlay = img.copy()
             cv2.fillPoly(overlay, [corners], color)
             cv2.addWeighted(overlay, 0.3, img, 0.7, 0, img)
-            
+
             # Draw outline
             cv2.polylines(img, [corners], True, color, 2, cv2.LINE_AA)
-            
+
             # Draw center point
             center = (int(row['center_x']), int(row['center_y']))
             cv2.circle(img, center, 4, color, -1)
-            
+
             # Draw track ID
             cv2.putText(img, f"{int(track_id)}", 
                        (center[0] + 10, center[1] - 10),

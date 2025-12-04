@@ -159,7 +159,68 @@ class SimulationToCSVConverter:
             }
             
             rows.append(row)
-        
+
+        # Add traffic lights as special rows so they can be drawn on the visualization
+        # Use class_id = 2 for traffic lights and negative track_ids to avoid collision
+        tl_id = -1
+        for lane in self.model.road_network.all_lanes.values():
+            for tl in getattr(lane, 'traffic_lights', []) or []:
+                # TrafficLights may have position_point set (world coordinates)
+                pos = getattr(tl, 'position_point', None)
+                if pos is None:
+                    continue
+
+                world_x, world_y = pos.x, pos.y
+                center_x, center_y = world_to_image_coordinates(
+                    world_x, world_y,
+                    self.image_width, self.image_height,
+                    self.world_bounds,
+                    self.offset_x, self.offset_y,
+                    self.position_scale
+                )
+
+                # Small visual marker for traffic light (in pixels)
+                length_pixels = max(2, 0.5 * self.bbox_pixels_per_meter)
+                width_pixels = max(2, 0.5 * self.bbox_pixels_per_meter)
+                angle = 0.0
+
+                bbox_corners_image = calculate_bounding_box_corners(
+                    center_x, center_y, length_pixels, width_pixels, angle
+                )
+
+                corners_image = [
+                    max(0, min(self.image_width, bbox_corners_image[0])),  # x1
+                    max(0, min(self.image_height, bbox_corners_image[1])),  # y1
+                    max(0, min(self.image_width, bbox_corners_image[2])),  # x2
+                    max(0, min(self.image_height, bbox_corners_image[3])),  # y2
+                    max(0, min(self.image_width, bbox_corners_image[4])),  # x3
+                    max(0, min(self.image_height, bbox_corners_image[5])),  # y3
+                    max(0, min(self.image_width, bbox_corners_image[6])),  # x4
+                    max(0, min(self.image_height, bbox_corners_image[7]))   # y4
+                ]
+
+                tl_state = tl.get_state() if hasattr(tl, 'get_state') else None
+
+                row = {
+                    'frame': frame_number,
+                    'track_id': tl_id,
+                    'timestamp': self.model.current_time,
+                    'center_x': max(0, min(self.image_width, center_x)),
+                    'center_y': max(0, min(self.image_height, center_y)),
+                    'x1': corners_image[0],
+                    'y1': corners_image[1],
+                    'x2': corners_image[2],
+                    'y2': corners_image[3],
+                    'x3': corners_image[4],
+                    'y3': corners_image[5],
+                    'x4': corners_image[6],
+                    'y4': corners_image[7],
+                    'class_id': 2,
+                    'tl_state': tl_state
+                }
+                rows.append(row)
+                tl_id -= 1
+
         # Create DataFrame
         df = pd.DataFrame(rows)
         

@@ -83,7 +83,7 @@ class TrafficLightsNode:
     _stage_counter: int
     _steps_counter: int
 
-    def __init__(self, traffic_lights_instances: List[TrafficLights], steps_per_stage: int, steps_per_change_indication: int):
+    def __init__(self, traffic_lights_instances: List[TrafficLights], steps_per_stage: int, steps_per_change_indication: int, interstage_buffer_steps: int = 0):
         """Create node of traffic lights instances. Node is responsible for traffic lights synchronization.
 
         Args:
@@ -101,9 +101,14 @@ class TrafficLightsNode:
         # Ensure at least one stage
         if len(self._cycle_stages) == 0:
             self._cycle_stages.append(0)
-            
+
         self._stage_counter = 0
         self._steps_counter = 0
+        # Optional buffer between stages where all lights are red to avoid conflicts
+        self._interstage_buffer_steps = max(0, int(interstage_buffer_steps))
+        self._in_interstage_buffer = False
+        self._interstage_buffer_counter = 0
+
         self._change_stage()
 
     def _change_stage(self):
@@ -121,12 +126,31 @@ class TrafficLightsNode:
     def step(self):
         """Take into account the time duration and change traffic lights instances states if applicable.
         """
+        # If we're currently in an inter-stage all-red buffer, count it down
+        if self._in_interstage_buffer:
+            self._interstage_buffer_counter -= 1
+            if self._interstage_buffer_counter <= 0:
+                # Buffer finished — advance to next stage and apply it
+                self._in_interstage_buffer = False
+                self._stage_counter = (self._stage_counter + 1) % len(self._cycle_stages)
+                self._change_stage()
+            return
+
+        # Normal stage step counting
         self._steps_counter = (self._steps_counter + 1) % self._stage_change_step
         if self._steps_counter == self._stage_change_indication_step:
             self._indicate_stage_change()
         elif self._steps_counter == 0:
-            self._stage_counter = (self._stage_counter + 1) % len(self._cycle_stages)
-            self._change_stage()
+            # Stage ended — enter an all-red inter-stage buffer if requested, otherwise change immediately
+            if self._interstage_buffer_steps > 0:
+                # Set all lights to red for the duration of the buffer
+                for traffic_lights in self._traffic_lights_instances:
+                    traffic_lights._state = 'red'
+                self._in_interstage_buffer = True
+                self._interstage_buffer_counter = int(self._interstage_buffer_steps)
+            else:
+                self._stage_counter = (self._stage_counter + 1) % len(self._cycle_stages)
+                self._change_stage()
 
         
 

@@ -586,7 +586,13 @@ class TrafficSimulationModel(mesa.Model):
             road_id += 1
         
         # Create TrafficLightsNode
-        self.traffic_lights_node = TrafficLightsNode(created_traffic_lights, int(30 / self.time_step), int(5 / self.time_step))
+        # Use 7s stage length and 1s yellow, plus a 1s all-red buffer between stages
+        self.traffic_lights_node = TrafficLightsNode(
+            created_traffic_lights,
+            int(7 / self.time_step),            # steps per stage (~7 seconds)
+            int(1 / self.time_step),            # yellow/indication length (~1 second)
+            interstage_buffer_steps=int(1 / self.time_step)  # all-red buffer (~1 second)
+        )
 
         # Create lane-changing connection lanes
         self._create_lane_change_connections(lane_data, image_to_world, road_id)

@@ -13,6 +13,14 @@ from typing import Optional, List, Tuple, TYPE_CHECKING, cast
 from ..utils.krauss_model import KraussModel
 from ..models.road_network import Point, TrafficLights
 
+# Hardcoded lane pairs that must consider each other (mutual awareness)
+# Pairs are bidirectional (we include both orders when checking)
+MUTUAL_AWARE_LANE_PAIRS = {
+    (1, 2), (2, 1),
+    (3, 4), (4, 3),
+    (5, 7), (7, 5),
+}
+
 if TYPE_CHECKING:
     from ..models.traffic_model import TrafficSimulationModel
 else:
@@ -208,12 +216,24 @@ class Vehicle(mesa.Agent):
             #         distance_to_traffic_lights,
             #         dt
             #     )
+            # Determine traffic light state and pass appropriate leader speed to Krauss
+            # If the light is green, do NOT treat it as a stationary leader (pass None)
+            # so vehicles do not stop while it's green. If it's red or yellow, treat
+            # it as a stopped leader (leader_speed = 0) which enforces stopping.
+            tl_state = None
+            try:
+                tl_state = applicable_traffic_lights.get_state()
+            except Exception:
+                tl_state = None
+
+            leader_for_tl = None if tl_state == 'green' else 0.0
+
             traffic_lights_based_speed = self.krauss_model.calculate_next_speed(
-            self.speed,
-            distance_to_traffic_lights - self.length / 2 - 3,
-            self.model.time_step,
-            0
-        )
+                self.speed,
+                max(0.0, distance_to_traffic_lights - self.length / 2 - 3),
+                self.model.time_step,
+                leader_for_tl
+            )
 
         
             self.speed = min(leader_based_speed, traffic_lights_based_speed)
@@ -260,11 +280,29 @@ class Vehicle(mesa.Agent):
                 return  # Exit immediately
             
             # Lane does NOT end at edge - try transitions
-            if not self._try_lane_transition():
-                # No transition possible - stop at end of lane
-                print(f"  ⏸️  Vehicle {self.unique_id} stopping at end of lane {self.lane_id} (not at edge, no transition available)")
+            # Lane does NOT end at edge - only allow transitions for true turning lanes
+            current_lane = self.model.road_network.get_lane(self.lane_id)
+            # route_types maps connected_lane_id -> route_type; lane_change connections are not turning
+            has_turning_connection = False
+            if current_lane and current_lane.route_types:
+                for rt in current_lane.route_types.values():
+                    if rt != 'lane_change':
+                        has_turning_connection = True
+                        break
+
+            if has_turning_connection:
+                # Only attempt transition if this lane is a turning lane
+                if not self._try_lane_transition():
+                    # No transition possible - stop at end of lane
+                    print(f"  ⏸️  Vehicle {self.unique_id} stopping at end of lane {self.lane_id} (not at edge, no transition available)")
+                    self.position = lane_length
+                    self.speed = 0
+            else:
+                # Not a turning lane (or only lane_change connections) - remove vehicle at lane end
+                print(f"🚪 Vehicle {self.unique_id} reached end of non-turning lane {self.lane_id} - removing")
                 self.position = lane_length
                 self.speed = 0
+                self.model.remove_vehicle(self)
             # If transition was successful, position was already set in _try_lane_transition()
         else:
             self.position = next_position
@@ -312,24 +350,83 @@ class Vehicle(mesa.Agent):
             return
 
     def _calculate_leader_based_desired_speed(self, distance_to_leader: float) -> float:
-        
-        # Get leader speed
+        # Get leader speed from same-lane leader first
         leader_speed = None
         leader = self.get_leader()
         leader_length = self.length
+        effective_gap = distance_to_leader - self.length / 2 - leader_length / 2
         if leader is not None:
             leader_speed = leader.speed
             leader_length = leader.length
-        
+            effective_gap = distance_to_leader - self.length / 2 - leader_length / 2
+
+        # Additionally consider vehicles in adjacent lanes that are slightly
+        # ahead and close laterally (e.g., where two lane centerlines split).
+        # If such a vehicle is found within a forward search distance, treat
+        # it as a virtual leader with its longitudinal gap and speed.
+        try:
+            lane = self.model.road_network.get_lane(self.lane_id)
+            lane_dir = lane.get_direction_at_distance(self.position) if hasattr(lane, 'get_direction_at_distance') else lane.direction
+            dir_x, dir_y = lane_dir
+            # Search parameters
+            # Reduce forward search and lateral threshold so adjacent lanes are
+            # considered only when they are almost coincident. Make the
+            # detection area smaller to avoid influencing cars after the split.
+            forward_search_distance = 4.0   # meters ahead to consider (smaller)
+            lateral_close_threshold = 0.1   # meters lateral separation to consider as blocking (smaller)
+
+            closest_virtual_gap = float('inf')
+            closest_virtual_speed = None
+
+            for other in self.model.vehicles:
+                if other is self:
+                    continue
+                # Get other's world position
+                ox, oy = other.get_visual_position()
+                # Vector from us to other
+                dx = ox - lane.get_position_at_distance(self.position).x
+                dy = oy - lane.get_position_at_distance(self.position).y
+                # Project onto lane direction to get longitudinal distance
+                longitudinal = dx * dir_x + dy * dir_y
+                # Lateral separation (abs of projection onto perpendicular)
+                perp_x, perp_y = -dir_y, dir_x
+                lateral = abs(dx * perp_x + dy * perp_y)
+
+                # Only consider vehicles in same lane or in explicitly configured
+                # mutual-aware lane pairs. This disables cross-lane consideration
+                # for all other neighboring lanes.
+                is_mutual = (self.lane_id, other.lane_id) in MUTUAL_AWARE_LANE_PAIRS
+
+                if not (other.lane_id == self.lane_id or is_mutual):
+                    continue
+
+                # Consider only vehicles ahead within forward_search_distance
+                if not (longitudinal > 0 and longitudinal < forward_search_distance):
+                    continue
+
+                # Compute gap approximated by longitudinal minus half-lengths
+                gap = longitudinal - (other.length/2) - (self.length/2)
+                if gap < closest_virtual_gap:
+                    closest_virtual_gap = gap
+                    closest_virtual_speed = other.speed
+
+            if closest_virtual_speed is not None and closest_virtual_gap >= 0:
+                # If this virtual leader is closer than the same-lane leader gap, use it
+                if closest_virtual_gap < effective_gap or leader is None:
+                    effective_gap = closest_virtual_gap
+                    leader_speed = closest_virtual_speed
+        except Exception:
+            # On any failure, fall back to same-lane leader behavior
+            pass
+
         # Calculate next speed using Krauss model
-        # The Krauss model already handles safe speed calculation
         next_speed = self.krauss_model.calculate_next_speed(
             self.speed,
-            distance_to_leader - 5 * self.length / 2 - 5 * leader_length / 2,
+            max(0.0, effective_gap),
             self.model.time_step,
             leader_speed
         )
-        
+
         return next_speed
     
     def _try_lane_transition(self) -> bool:
@@ -456,21 +553,160 @@ class Vehicle(mesa.Agent):
         lane_dir = lane.get_direction_at_distance(new_position) if hasattr(lane, 'get_direction_at_distance') else lane.direction
         new_angle = np.arctan2(lane_dir[1], lane_dir[0]) if lane_dir is not None else self.get_visual_angle()
         
-        # Check all vehicles in the simulation (not just current lane)
-        for vehicle in self.model.vehicles:
+        # Check vehicles in the same lane and immediate adjacent lanes.
+        # For adjacent lanes use a smaller safety threshold so cars don't react
+        # to vehicles that are merely driving side-by-side in neighboring lanes.
+        # Only include adjacent lanes if they are explicitly configured as
+        # mutual-aware pairs. This prevents vehicles in unrelated neighboring
+        # lanes from blocking each other.
+        lane_ids_to_check = {self.lane_id}
+        left = self.model.get_adjacent_lane(self.lane_id, 'left')
+        right = self.model.get_adjacent_lane(self.lane_id, 'right')
+        if left is not None and (self.lane_id, left) in MUTUAL_AWARE_LANE_PAIRS:
+            lane_ids_to_check.add(left)
+        if right is not None and (self.lane_id, right) in MUTUAL_AWARE_LANE_PAIRS:
+            lane_ids_to_check.add(right)
+
+        # Also always include any explicitly configured mutual-aware lanes
+        # even if they are not reported as adjacent by the road network.
+        for a, b in MUTUAL_AWARE_LANE_PAIRS:
+            if a == self.lane_id:
+                lane_ids_to_check.add(b)
+
+        # Gather vehicles in those lanes
+        lane_vehicles = [v for v in self.model.vehicles if v.lane_id in lane_ids_to_check]
+        for vehicle in lane_vehicles:
             if vehicle == self:
                 continue
-            
+            # Current visual position of the other vehicle
             other_world_x, other_world_y = vehicle.get_visual_position()
             other_angle = vehicle.get_visual_angle()
-            center_dist = np.sqrt((new_world_x - other_world_x)**2 + (new_world_y - other_world_y)**2)
-            min_center_gap = (self.length + vehicle.length) / 2
-            if center_dist < min_center_gap:
+            dx = other_world_x - new_world_x
+            dy = other_world_y - new_world_y
+            center_dist = np.sqrt(dx*dx + dy*dy)
+
+            # Compute lateral separation relative to our lane direction.
+            # This helps decide whether an adjacent lane is effectively the same
+            # physical lane (very close centerlines) or a distinct lane.
+            sin_a = np.sin(new_angle)
+            cos_a = np.cos(new_angle)
+            # Perpendicular unit vector to lane direction
+            perp_x, perp_y = -sin_a, cos_a
+            lateral_sep = abs(dx * perp_x + dy * perp_y)
+
+            # Threshold for considering adjacent lane 'close' (meters).
+            # Make this very small so vehicles in neighboring lanes do not
+            # react unless centerlines are effectively coincident.
+            lateral_close_threshold = 0.1
+
+            # Compute longitudinal separation along our lane direction
+            cos_a = np.cos(new_angle)
+            sin_a = np.sin(new_angle)
+            longitudinal_sep = dx * cos_a + dy * sin_a
+
+            # If the other vehicle is clearly behind us (more than 2m), ignore it
+            # - prevents being blocked by vehicles that are behind or beside us
+            if longitudinal_sep < -2.0:
+                continue
+
+            # Base gap between centers (half lengths sum)
+            base_min_center_gap = (self.length + vehicle.length) / 2
+
+            # Compute longitudinal separation along our lane direction
+            cos_a = np.cos(new_angle)
+            sin_a = np.sin(new_angle)
+            longitudinal_sep = dx * cos_a + dy * sin_a
+
+            # If this pair is mutual-aware, enforce a minimum longitudinal gap
+            # so vehicles on configured pairs do not occupy the same forward space.
+            is_mutual_pair = (self.lane_id, vehicle.lane_id) in MUTUAL_AWARE_LANE_PAIRS
+            mutual_min_longitudinal = 6.0
+            debug = os.getenv('TRAFFIC_DEBUG')
+            # Only enforce if the other vehicle is ahead (positive longitudinal)
+            if is_mutual_pair and 0.0 < longitudinal_sep < mutual_min_longitudinal:
+                if debug:
+                    print(f"[DEBUG] mutual-block: {self.unique_id}(lane {self.lane_id}) <- {vehicle.unique_id}(lane {vehicle.lane_id}) long_sep={longitudinal_sep:.2f}")
                 return True
-            
+
+            # If this pair is in the mutual-awareness set, treat like same-lane
+            is_mutual_pair = (self.lane_id, vehicle.lane_id) in MUTUAL_AWARE_LANE_PAIRS
+            if vehicle.lane_id == self.lane_id or lateral_sep < lateral_close_threshold or is_mutual_pair:
+                # Same lane, very close lanes, or configured mutual pair -> use full safety gap
+                min_center_gap = base_min_center_gap
+            else:
+                # Adjacent lane but separated enough -> allow closer side-by-side
+                adjacent_factor = 0.7
+                min_center_gap = base_min_center_gap * adjacent_factor
+
+            # If centers are too close to the other vehicle's current position, that's a collision/blocked
+            if center_dist < min_center_gap:
+                if debug:
+                    print(f"[DEBUG] center-block: {self.unique_id}(lane {self.lane_id}) <- {vehicle.unique_id}(lane {vehicle.lane_id}) center_dist={center_dist:.2f} min_gap={min_center_gap:.2f}")
+                return True
+
+            # Also consider the other vehicle's predicted next position (so two vehicles
+            # moving towards the same spot don't pass through each other). Estimate
+            # other_next_position using its current speed and the model time step.
+            try:
+                dt = self.model.time_step
+                other_lane = self.model.road_network.get_lane(vehicle.lane_id)
+                other_next_pos = vehicle.position + vehicle.speed * dt
+                # clamp to lane length
+                other_lane_length = self.model.get_lane_length(vehicle.lane_id)
+                if other_next_pos > other_lane_length:
+                    other_next_pos = other_lane_length
+                other_next_point = other_lane.get_position_at_distance(other_next_pos)
+                other_next_x, other_next_y = other_next_point.x, other_next_point.y
+                dx2 = other_next_x - new_world_x
+                dy2 = other_next_y - new_world_y
+                center_dist_next = np.sqrt(dx2*dx2 + dy2*dy2)
+            except Exception:
+                center_dist_next = float('inf')
+
+            # Compute longitudinal separation to other's predicted next pos and skip
+            # if other will be behind us.
+            try:
+                longitudinal_sep_next = dx2 * cos_a + dy2 * sin_a
+            except Exception:
+                longitudinal_sep_next = float('inf')
+
+            if center_dist_next < min_center_gap and longitudinal_sep_next > -2.0:
+                if debug:
+                    print(f"[DEBUG] pred-block: {self.unique_id}(lane {self.lane_id}) <- {vehicle.unique_id}(lane {vehicle.lane_id}) center_dist_next={center_dist_next:.2f} min_gap={min_center_gap:.2f} long_next={longitudinal_sep_next:.2f}")
+                return True
+
+            # For bounding-box overlap check, decide adjacency based on lateral separation
+            # to the other's predicted/ current position (use the smaller lateral sep)
+            try:
+                # lateral separation to current and next positions
+                sin_a = np.sin(new_angle)
+                cos_a = np.cos(new_angle)
+                perp_x, perp_y = -sin_a, cos_a
+                lateral_current = abs((other_world_x - new_world_x) * perp_x + (other_world_y - new_world_y) * perp_y)
+                lateral_next = abs((other_next_x - new_world_x) * perp_x + (other_next_y - new_world_y) * perp_y)
+                lateral_min = min(lateral_current, lateral_next)
+            except Exception:
+                lateral_min = lateral_sep
+
+            considered_adjacent = (vehicle.lane_id != self.lane_id and lateral_min >= lateral_close_threshold)
+            is_mutual_pair = (self.lane_id, vehicle.lane_id) in MUTUAL_AWARE_LANE_PAIRS
+
+            # Check bounding boxes against current position. For configured mutual
+            # lane pairs, force the larger safety margin so they don't run into each other.
             if self._bounding_boxes_overlap(
                 new_world_x, new_world_y, self.length, self.width, new_angle,
-                other_world_x, other_world_y, vehicle.length, vehicle.width, other_angle
+                other_world_x, other_world_y, vehicle.length, vehicle.width, other_angle,
+                considered_adjacent=considered_adjacent,
+                considered_mutual=is_mutual_pair
+            ):
+                return True
+
+            # And check bounding boxes against other's predicted position
+            if self._bounding_boxes_overlap(
+                new_world_x, new_world_y, self.length, self.width, new_angle,
+                other_next_x, other_next_y, vehicle.length, vehicle.width, other_angle,
+                considered_adjacent=considered_adjacent,
+                considered_mutual=is_mutual_pair
             ):
                 return True
         
@@ -479,7 +715,9 @@ class Vehicle(mesa.Agent):
     def _bounding_boxes_overlap(
         self,
         x1: float, y1: float, l1: float, w1: float, a1: float,
-        x2: float, y2: float, l2: float, w2: float, a2: float
+        x2: float, y2: float, l2: float, w2: float, a2: float,
+        considered_adjacent: bool = False,
+        considered_mutual: bool = False
     ) -> bool:
         """
         Check if two rotated bounding boxes overlap using simplified distance check.
@@ -495,21 +733,67 @@ class Vehicle(mesa.Agent):
         Returns:
             True if boxes overlap, False otherwise
         """
-        # Calculate distance between centers
-        center_dist = np.sqrt((x1 - x2)**2 + (y1 - y2)**2)
-        
-        # Calculate maximum extent (half-diagonal) of each box
-        max_extent1 = np.sqrt((l1/2)**2 + (w1/2)**2)
-        max_extent2 = np.sqrt((l2/2)**2 + (w2/2)**2)
-        
-        # Safety margin to prevent bounding box collisions - expanded for wider spacing
-        safety_margin = 0.5  # meters
-        
-        # If distance between centers is less than sum of extents + safety margin, collision
-        if center_dist < max_extent1 + max_extent2 + safety_margin:
-            return True
-        
-        return False
+        # Use Separating Axis Theorem (SAT) for robust oriented bounding box overlap.
+        # Compute corner points for each box.
+        def corners(x, y, length, width, angle):
+            # Half-dimensions
+            hl = length / 2.0
+            hw = width / 2.0
+            ca = np.cos(angle)
+            sa = np.sin(angle)
+            # local axes
+            ux = (ca, sa)  # along length
+            uy = (-sa, ca)  # along width (perp)
+            # corners in order
+            return [
+                (x + ux[0]*hl + uy[0]*hw, y + ux[1]*hl + uy[1]*hw),
+                (x - ux[0]*hl + uy[0]*hw, y - ux[1]*hl + uy[1]*hw),
+                (x - ux[0]*hl - uy[0]*hw, y - ux[1]*hl - uy[1]*hw),
+                (x + ux[0]*hl - uy[0]*hw, y + ux[1]*hl - uy[1]*hw),
+            ]
+
+        c1 = corners(x1, y1, l1, w1, a1)
+        c2 = corners(x2, y2, l2, w2, a2)
+
+        # Axes to test are the normals of all edges (two unique axes per box)
+        def axes_from_corners(c):
+            axes = []
+            for i in range(2):
+                p1 = c[i]
+                p2 = c[(i+1) % 4]
+                edge = (p2[0]-p1[0], p2[1]-p1[1])
+                # normal
+                norm = (-edge[1], edge[0])
+                # normalize
+                norm_len = np.hypot(norm[0], norm[1])
+                if norm_len > 1e-8:
+                    axes.append((norm[0]/norm_len, norm[1]/norm_len))
+            return axes
+
+        axes = axes_from_corners(c1) + axes_from_corners(c2)
+
+        # Safety margin: smaller for adjacent lanes, larger for same-lane.
+        # If this is an explicitly configured mutual pair, increase the
+        # safety margin so vehicles never overlap.
+        safety_margin_same = 0.5
+        safety_margin_adjacent = 0.2
+        if considered_mutual:
+            margin = safety_margin_same * 1.6
+        else:
+            margin = safety_margin_adjacent if considered_adjacent else safety_margin_same
+
+        # Project corners onto each axis and check for gaps
+        for ax in axes:
+            proj1 = [p[0]*ax[0] + p[1]*ax[1] for p in c1]
+            proj2 = [p[0]*ax[0] + p[1]*ax[1] for p in c2]
+            min1, max1 = min(proj1) - margin, max(proj1) + margin
+            min2, max2 = min(proj2) - margin, max(proj2) + margin
+            # if separated on this axis -> no overlap
+            if max1 < min2 or max2 < min1:
+                return False
+
+        # No separating axis found -> boxes overlap (considering margin)
+        return True
     
     def get_visual_position(self) -> Tuple[float, float]:
         """
