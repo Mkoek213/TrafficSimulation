@@ -12,13 +12,13 @@ import random
 from typing import Optional, List, Tuple, TYPE_CHECKING, cast
 from ..utils.krauss_model import KraussModel
 from ..models.road_network import Point, TrafficLights
+import os
 
 # Hardcoded lane pairs that must consider each other (mutual awareness)
 # Pairs are bidirectional (we include both orders when checking)
 MUTUAL_AWARE_LANE_PAIRS = {
     (1, 2), (2, 1),
     (3, 4), (4, 3),
-    (5, 7), (7, 5),
 }
 
 if TYPE_CHECKING:
@@ -254,7 +254,6 @@ class Vehicle(mesa.Agent):
         collision_detected = self._check_collision_after_move(next_position)
         
         if collision_detected:
-            print("colision detected")
             # Collision ahead (including overlapping lanes) – wait in place
             self.speed = 0
             return
@@ -270,6 +269,15 @@ class Vehicle(mesa.Agent):
             # CRITICAL: If lane ends at frame edge, vehicles should EXIT, not transition
             # Only try transitions if lane does NOT end at frame edge
             is_at_edge = self.model.is_lane_end_at_frame_edge(self.lane_id)
+            
+            # Lanes 1, 2, 3, 7, and 8: vehicles should disappear at the end, no transitions
+            # This prevents random stopping and unwanted lane changes
+            if self.lane_id in [1, 2, 3, 7, 8]:
+                print(f"🚪 Vehicle {self.unique_id} reached end of lane {self.lane_id} - removing (no transitions for lanes 1, 2, 3, 7, 8)")
+                self.position = lane_length
+                self.speed = 0
+                self.model.remove_vehicle(self)
+                return  # Exit immediately
             
             if is_at_edge:
                 # Lane ends at frame edge - vehicles should exit, not transition
@@ -569,6 +577,7 @@ class Vehicle(mesa.Agent):
 
         # Also always include any explicitly configured mutual-aware lanes
         # even if they are not reported as adjacent by the road network.
+        # Note: Lanes 1 and 2 are still checked for collisions, but blocking rules are relaxed below
         for a, b in MUTUAL_AWARE_LANE_PAIRS:
             if a == self.lane_id:
                 lane_ids_to_check.add(b)
@@ -619,19 +628,30 @@ class Vehicle(mesa.Agent):
 
             # If this pair is mutual-aware, enforce a minimum longitudinal gap
             # so vehicles on configured pairs do not occupy the same forward space.
+            # Exception: lanes 1 and 2 should not block each other - they can drive side-by-side
             is_mutual_pair = (self.lane_id, vehicle.lane_id) in MUTUAL_AWARE_LANE_PAIRS
+            # Skip strict mutual blocking for lanes 1 and 2 to prevent random stops
+            is_lanes_1_2 = {self.lane_id, vehicle.lane_id} == {1, 2}
             mutual_min_longitudinal = 6.0
             debug = os.getenv('TRAFFIC_DEBUG')
             # Only enforce if the other vehicle is ahead (positive longitudinal)
-            if is_mutual_pair and 0.0 < longitudinal_sep < mutual_min_longitudinal:
+            # Skip this for lanes 1 and 2 - they can drive parallel without blocking
+            if is_mutual_pair and not is_lanes_1_2 and 0.0 < longitudinal_sep < mutual_min_longitudinal:
                 if debug:
                     print(f"[DEBUG] mutual-block: {self.unique_id}(lane {self.lane_id}) <- {vehicle.unique_id}(lane {vehicle.lane_id}) long_sep={longitudinal_sep:.2f}")
                 return True
 
             # If this pair is in the mutual-awareness set, treat like same-lane
+            # Exception: lanes 1 and 2 should not use strict same-lane collision rules
             is_mutual_pair = (self.lane_id, vehicle.lane_id) in MUTUAL_AWARE_LANE_PAIRS
-            if vehicle.lane_id == self.lane_id or lateral_sep < lateral_close_threshold or is_mutual_pair:
-                # Same lane, very close lanes, or configured mutual pair -> use full safety gap
+            is_lanes_1_2 = {self.lane_id, vehicle.lane_id} == {1, 2}
+            # For lanes 1 and 2, only use strict rules if actually in same lane or very close laterally
+            # Otherwise treat them as separate lanes that can drive side-by-side
+            if vehicle.lane_id == self.lane_id or lateral_sep < lateral_close_threshold:
+                # Same lane or very close lanes -> use full safety gap
+                min_center_gap = base_min_center_gap
+            elif is_mutual_pair and not is_lanes_1_2:
+                # Mutual-aware pair (but not lanes 1/2) -> use full safety gap
                 min_center_gap = base_min_center_gap
             else:
                 # Adjacent lane but separated enough -> allow closer side-by-side
@@ -690,6 +710,9 @@ class Vehicle(mesa.Agent):
 
             considered_adjacent = (vehicle.lane_id != self.lane_id and lateral_min >= lateral_close_threshold)
             is_mutual_pair = (self.lane_id, vehicle.lane_id) in MUTUAL_AWARE_LANE_PAIRS
+            is_lanes_1_2 = {self.lane_id, vehicle.lane_id} == {1, 2}
+            # Lanes 1 and 2 should not use strict mutual collision rules - allow side-by-side driving
+            considered_mutual = is_mutual_pair and not is_lanes_1_2
 
             # Check bounding boxes against current position. For configured mutual
             # lane pairs, force the larger safety margin so they don't run into each other.
@@ -697,7 +720,7 @@ class Vehicle(mesa.Agent):
                 new_world_x, new_world_y, self.length, self.width, new_angle,
                 other_world_x, other_world_y, vehicle.length, vehicle.width, other_angle,
                 considered_adjacent=considered_adjacent,
-                considered_mutual=is_mutual_pair
+                considered_mutual=considered_mutual
             ):
                 return True
 
@@ -706,7 +729,7 @@ class Vehicle(mesa.Agent):
                 new_world_x, new_world_y, self.length, self.width, new_angle,
                 other_next_x, other_next_y, vehicle.length, vehicle.width, other_angle,
                 considered_adjacent=considered_adjacent,
-                considered_mutual=is_mutual_pair
+                considered_mutual=considered_mutual
             ):
                 return True
         

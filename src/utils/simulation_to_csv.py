@@ -162,15 +162,40 @@ class SimulationToCSVConverter:
 
         # Add traffic lights as special rows so they can be drawn on the visualization
         # Use class_id = 2 for traffic lights and negative track_ids to avoid collision
-        tl_id = -1
+        # Track traffic light positions to detect duplicates and apply offsets for adjacent lanes
+        tl_positions = {}  # Maps rounded (x, y) -> list of (lane_id, tl, lane)
+        
+        # First pass: collect all traffic lights and group by position
         for lane in self.model.road_network.all_lanes.values():
+            # Skip lane 4 - traffic lights should not be visible for lane 4
+            if lane.lane_id == 4:
+                continue
             for tl in getattr(lane, 'traffic_lights', []) or []:
-                # TrafficLights may have position_point set (world coordinates)
                 pos = getattr(tl, 'position_point', None)
                 if pos is None:
                     continue
-
+                # Round position to detect nearby duplicates (within 1 meter)
+                rounded_x = round(pos.x, 1)
+                rounded_y = round(pos.y, 1)
+                key = (rounded_x, rounded_y)
+                if key not in tl_positions:
+                    tl_positions[key] = []
+                tl_positions[key].append((lane.lane_id, tl, lane))
+        
+        # Second pass: add traffic lights with offsets for adjacent lanes
+        tl_id = -1
+        for (rounded_x, rounded_y), lane_tl_list in tl_positions.items():
+            # Sort by lane_id for consistent ordering
+            lane_tl_list.sort(key=lambda x: x[0])
+            
+            for idx, (lane_id, tl, lane) in enumerate(lane_tl_list):
+                # Skip lane 4 - traffic lights should not be visible for lane 4
+                if lane_id == 4:
+                    continue
+                pos = tl.position_point
                 world_x, world_y = pos.x, pos.y
+                
+                # Calculate base image coordinates
                 center_x, center_y = world_to_image_coordinates(
                     world_x, world_y,
                     self.image_width, self.image_height,
@@ -178,6 +203,37 @@ class SimulationToCSVConverter:
                     self.offset_x, self.offset_y,
                     self.position_scale
                 )
+                
+                # Apply offset for adjacent lanes that share the same position
+                offset_x_pixels = 0
+                offset_y_pixels = 0
+                
+                if len(lane_tl_list) > 1:
+                    # Multiple lanes share this position - apply offsets perpendicular to lane direction
+                    if lane.centerline_points and len(lane.centerline_points) >= 2:
+                        # Get lane direction from centerline
+                        p1 = lane.centerline_points[0]
+                        p2 = lane.centerline_points[-1]
+                        dx = p2.x - p1.x
+                        dy = p2.y - p1.y
+                        length = np.sqrt(dx*dx + dy*dy)
+                        if length > 0:
+                            # Normalize direction
+                            dir_x = dx / length
+                            dir_y = dy / length
+                            # Perpendicular direction (rotate 90 degrees counterclockwise)
+                            perp_x = -dir_y
+                            perp_y = dir_x
+                            # Offset by 15 pixels in perpendicular direction, centered around 0
+                            offset_distance_pixels = 15  # pixels
+                            num_lanes = len(lane_tl_list)
+                            # Center the offsets around 0 (e.g., for 2 lanes: -7.5, +7.5)
+                            offset_x_pixels = perp_x * offset_distance_pixels * (idx - (num_lanes - 1) / 2)
+                            offset_y_pixels = perp_y * offset_distance_pixels * (idx - (num_lanes - 1) / 2)
+                
+                # Apply the offset
+                center_x += offset_x_pixels
+                center_y += offset_y_pixels
 
                 # Small visual marker for traffic light (in pixels)
                 length_pixels = max(2, 0.5 * self.bbox_pixels_per_meter)

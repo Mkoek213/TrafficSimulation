@@ -59,6 +59,11 @@ class TrafficSimulationModel(mesa.Model):
         self.max_vehicles = max_vehicles
         self.model_boost = model_boost
         
+        # Default transformation parameters (will be overridden if custom lanes loaded)
+        self.offset_x = 2064.0
+        self.offset_y = 526.0
+        self.scale = 0.3507
+        
         # MESA components
         self.vehicle_agents = AgentSet([])
         self.space = ContinuousSpace(width, height, False)
@@ -591,7 +596,7 @@ class TrafficSimulationModel(mesa.Model):
             created_traffic_lights,
             int(7 / self.time_step),            # steps per stage (~7 seconds)
             int(1 / self.time_step),            # yellow/indication length (~1 second)
-            interstage_buffer_steps=int(1 / self.time_step)  # all-red buffer (~1 second)
+            interstage_buffer_steps=int(3 / self.time_step)  # all-red buffer (~3 seconds)
         )
 
         # Create lane-changing connection lanes
