@@ -47,8 +47,6 @@ Examples:
                        help='Simulation time step in seconds (default: 0.1)')
     parser.add_argument('--max-vehicles', type=int, default=150,
                        help='Maximum number of vehicles (default: 150)')
-    parser.add_argument('--spawn-rate', type=float, default=0.5,
-                       help='Vehicle spawn rate (vehicles/second, default: 0.5 for more frequent spawning)')
     parser.add_argument('--image-width', type=int, default=3840,
                        help='Image width in pixels (default: 3840 for SiteA.jpg)')
     parser.add_argument('--image-height', type=int, default=2160,
@@ -62,7 +60,40 @@ Examples:
     parser.add_argument('--custom-lanes', type=str, default=None,
                        help='Path to JSON file with custom marked lanes (from mark_lanes.py)')
     
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
+    
+    # Parse per-lane spawn rates from unknown args
+    spawn_rates = {}
+    i = 0
+    while i < len(unknown):
+        arg = unknown[i]
+        # Handle both -laneX and --laneX
+        if arg.startswith('-lane') or arg.startswith('--lane'):
+            try:
+                # Remove leading dashes and 'lane' prefix
+                lane_str = arg.lstrip('-').replace('lane', '')
+                lane_id = int(lane_str)
+                
+                if i + 1 < len(unknown):
+                    rate = float(unknown[i+1])
+                    spawn_rates[lane_id] = rate
+                    i += 2
+                else:
+                    print(f"Warning: No value provided for {arg}")
+                    i += 1
+            except ValueError:
+                print(f"Warning: Invalid lane argument format {arg}")
+                i += 1
+        else:
+            i += 1
+    
+    # Determine spawn rate configuration
+    if spawn_rates:
+        print(f"🚗 Using per-lane spawn rates: {spawn_rates}")
+        vehicle_spawn_rate = spawn_rates
+    else:
+        print(f"🚗 Using global spawn rate: {args.spawn_rate}")
+        vehicle_spawn_rate = args.spawn_rate
     
     print("="*60)
     print("MESA Traffic Simulation - Bounding Box Generator")
@@ -80,7 +111,7 @@ Examples:
         width=3000,  # World space width (not used directly, but needed)
         height=3000,  # World space height
         time_step=args.time_step,
-        vehicle_spawn_rate=args.spawn_rate,
+        vehicle_spawn_rate=vehicle_spawn_rate,
         max_vehicles=args.max_vehicles,
         custom_lanes_path=args.custom_lanes,
         model_boost=1

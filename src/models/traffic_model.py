@@ -33,7 +33,8 @@ class TrafficSimulationModel(mesa.Model):
                  width: int = 1000,
                  height: int = 1000,
                  time_step: float = 0.1,  # seconds
-                 vehicle_spawn_rate: float = 0.5,  # vehicles per second (more frequent spawning)
+
+                 vehicle_spawn_rate: float | Dict[int, float] = 0.5,  # vehicles per second (more frequent spawning)
                  max_vehicles: int = 150,
                  custom_lanes_path: Optional[str] = None,
                  model_boost: float = 10):
@@ -44,7 +45,8 @@ class TrafficSimulationModel(mesa.Model):
             width: Width of the simulation space (pixels)
             height: Height of the simulation space (pixels)
             time_step: Time step for simulation (seconds)
-            vehicle_spawn_rate: Rate of vehicle spawning (vehicles/second)
+
+            vehicle_spawn_rate: Rate of vehicle spawning (vehicles/second). Can be a float (global rate) or dict {lane_id: rate}.
             max_vehicles: Maximum number of vehicles in simulation
             custom_lanes_path: Path to JSON file with custom lanes (if None, uses default network)
             model_boot (float): How much faster the vehicles are moving than in reality.
@@ -74,7 +76,16 @@ class TrafficSimulationModel(mesa.Model):
         # Vehicle management
         self.vehicles: List[Vehicle] = []
         self.vehicle_counter = 0
-        self.spawn_timer = 0.0
+        
+        # Initialize spawn timers
+        if isinstance(self.vehicle_spawn_rate, dict):
+            # Per-lane spawning
+            self.spawn_timers = {lane_id: 0.0 for lane_id in self.vehicle_spawn_rate.keys()}
+            self.global_spawn_timer = None
+        else:
+            # Global spawning
+            self.spawn_timers = None
+            self.global_spawn_timer = 0.0
         self.current_time = 0.0
         
         # Image dimensions (will be set when loading custom lanes, defaults for test network)
@@ -434,6 +445,14 @@ class TrafficSimulationModel(mesa.Model):
         
         # Add intersection to network
         self.road_network.add_intersection(intersection)
+        
+        # Initialize TrafficLightsNode for test network (empty list of lights for now as they are managed by Intersection)
+        self.traffic_lights_node = TrafficLightsNode(
+            [],
+            int(7 / self.time_step),
+            int(1 / self.time_step),
+            int(3 / self.time_step)
+        )
         
         print(f"Created Korean crossing layout with {len(self.road_network.all_lanes)} lanes")
         print(f"Number of roads: {len(self.road_network.roads)}")
@@ -1345,9 +1364,10 @@ class TrafficSimulationModel(mesa.Model):
                 if len(self.vehicles) < self.max_vehicles:
                     self._spawn_vehicle()
                     # Small delay between initial spawns to ensure spacing
-                    self.spawn_timer = 0.5  # Reset timer so next spawn is delayed
+                    if self.global_spawn_timer is not None:
+                        self.global_spawn_timer = 0.5  # Reset timer so next spawn is delayed
     
-    def _spawn_vehicle(self):
+    def _spawn_vehicle(self, lane_id: Optional[int] = None):
         """Spawn a new vehicle with proper spacing."""
         if len(self.vehicles) >= self.max_vehicles:
             return
@@ -1361,8 +1381,27 @@ class TrafficSimulationModel(mesa.Model):
         if not spawnable_lanes:
             return
         
-        # Randomly choose a spawnable lane
-        lane_id = random.choice(spawnable_lanes)
+        # Randomly choose a spawnable lane if not specified
+        if lane_id is None:
+            # If per-lane spawn rates are defined, restrict to those lanes
+            if isinstance(self.vehicle_spawn_rate, dict):
+                allowed_lanes = list(self.vehicle_spawn_rate.keys())
+                # Filter spawnable_lanes to only include allowed_lanes
+                valid_lanes = [l for l in spawnable_lanes if l in allowed_lanes]
+                if not valid_lanes:
+                    return
+                lane_id = random.choice(valid_lanes)
+            else:
+                lane_id = random.choice(spawnable_lanes)
+        elif lane_id not in spawnable_lanes:
+            # If specified lane is not spawnable (e.g. not safe), abort
+            # But we should check if it's just temporarily unsafe or fundamentally unspawnable
+            # For now, just check if it's in the list of valid lanes
+            if lane_id not in self.road_network.all_lanes:
+                return
+            # If it exists but wasn't returned by _get_spawnable_lanes, it might be unsafe or not an entry lane
+            # We'll proceed to safety check below
+
         
         # Create vehicle
         vehicle_id = self.vehicle_counter
@@ -1727,13 +1766,26 @@ class TrafficSimulationModel(mesa.Model):
         self.current_time += self.time_step
         
         # Update spawn timer
-        self.spawn_timer += self.time_step
-        
-        # Spawn new vehicles if needed (very slowly)
-        if (self.spawn_timer >= 1.0 / self.vehicle_spawn_rate and 
-            len(self.vehicles) < self.max_vehicles):
-            self._spawn_vehicle()
-            self.spawn_timer = 0.0
+        if isinstance(self.vehicle_spawn_rate, dict):
+            # Per-lane spawning
+            for lane_id, rate in self.vehicle_spawn_rate.items():
+                if lane_id in self.spawn_timers:
+                    self.spawn_timers[lane_id] += self.time_step
+                    
+                    if (self.spawn_timers[lane_id] >= 1.0 / rate and 
+                        len(self.vehicles) < self.max_vehicles):
+                        self._spawn_vehicle(lane_id)
+                        self.spawn_timers[lane_id] = 0.0
+        else:
+            # Global spawning
+            if self.global_spawn_timer is not None:
+                self.global_spawn_timer += self.time_step
+                
+                # Spawn new vehicles if needed (very slowly)
+                if (self.global_spawn_timer >= 1.0 / self.vehicle_spawn_rate and 
+                    len(self.vehicles) < self.max_vehicles):
+                    self._spawn_vehicle()
+                    self.global_spawn_timer = 0.0
 
         # Update traffic lights
         self.traffic_lights_node.step()
@@ -1772,6 +1824,12 @@ class TrafficSimulationModel(mesa.Model):
         
         # Reset counters
         self.vehicle_counter = 0
+        if isinstance(self.vehicle_spawn_rate, dict):
+            self.spawn_timers = {lane_id: 0.0 for lane_id in self.vehicle_spawn_rate.keys()}
+            self.global_spawn_timer = None
+        else:
+            self.spawn_timers = None
+            self.global_spawn_timer = 0.0
         self.spawn_timer = 0.0
         self.current_time = 0.0
         
