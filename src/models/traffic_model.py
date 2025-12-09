@@ -77,10 +77,16 @@ class TrafficSimulationModel(mesa.Model):
         self.vehicles: List[Vehicle] = []
         self.vehicle_counter = 0
         
-        # Initialize spawn timers
+        # Initialize spawn timers with staggered start times
         if isinstance(self.vehicle_spawn_rate, dict):
-            # Per-lane spawning
-            self.spawn_timers = {lane_id: 0.0 for lane_id in self.vehicle_spawn_rate.keys()}
+            # Per-lane spawning with staggered start times
+            # Stagger by 0.3 seconds per lane to prevent simultaneous spawns on adjacent lanes
+            self.spawn_timers = {}
+            stagger_interval = 0.3  # seconds between lane spawn starts
+            for idx, lane_id in enumerate(sorted(self.vehicle_spawn_rate.keys())):
+                # Start each lane at a negative time (delay first spawn)
+                self.spawn_timers[lane_id] = -idx * stagger_interval
+            print(f"🚗 Initialized staggered spawn timers: {self.spawn_timers}")
             self.global_spawn_timer = None
         else:
             # Global spawning
@@ -1168,123 +1174,24 @@ class TrafficSimulationModel(mesa.Model):
     def _get_spawnable_lanes(self) -> List[int]:
         """
         Get lanes where vehicles can spawn.
-        Only lanes that:
-        1. Have spawn_position set (either manually or at first centerline point)
-        2. Spawn position is near the image edge
-        3. Lane direction points inward (toward center of image)
-        4. Lane is not connected to another lane at spawn point
+        Simply returns all lanes that have spawn_position set (spawn_enabled in JSON).
         
         Returns:
             List of lane IDs where vehicles can spawn
         """
         available_lanes = []
-        edge_threshold = 100  # pixels from edge
-        
-        # Transformation parameters (same as in _create_custom_road_network)
-        offset_x = 2064.0  # ROI center X
-        offset_y = 526.0   # ROI center Y
-        scale = 0.3507     # pixels per meter
-        
-        def world_to_image(world_x: float, world_y: float) -> Tuple[float, float]:
-            """Convert world coordinates back to image coordinates."""
-            img_x = world_x * scale + offset_x
-            img_y = offset_y - world_y * scale  # Flip Y-axis back
-            return img_x, img_y
-        
-        def image_to_world(img_x: float, img_y: float) -> Tuple[float, float]:
-            """Convert image coordinates to world coordinates."""
-            world_x = (img_x - offset_x) / scale
-            world_y = (offset_y - img_y) / scale  # Flip Y-axis
-            return world_x, world_y
-        
-        # Calculate world center (image center in world coordinates)
-        image_center_x = self.image_width / 2.0
-        image_center_y = self.image_height / 2.0
-        world_center_x, world_center_y = image_to_world(image_center_x, image_center_y)
-        
-        # Check for manual spawn points first (from JSON)
-        manual_spawn_points = {}
-        if hasattr(self, 'lane_image_points'):
-            # Try to get spawn_points from lanes_data if available
-            # This would be set if lanes were loaded from JSON with spawn_points
-            pass  # Will check lane.spawn_position instead
         
         for lane_id, lane in self.road_network.all_lanes.items():
-            # CRITICAL: Lane MUST have centerlines for vehicles to spawn
-            # Vehicles can ONLY move on centerlines, so they must spawn on centerlines
+            # Lane MUST have centerlines for vehicles to spawn
             if not lane.centerline_points or len(lane.centerline_points) < 2:
-                continue  # Skip lanes without centerlines - vehicles cannot move on them
+                continue
             
-            # Must have spawn_position (either detected or manually set)
+            # Must have spawn_position (set from spawn_enabled in JSON)
             if not lane.spawn_position:
                 continue
             
-            # Check if this is a manual spawn point
-            is_manual_spawn = lane_id in getattr(self, 'manual_spawn_lanes', set())
-            if not is_manual_spawn and hasattr(self, 'lanes_data'):
-                # Fallback: check JSON directly
-                spawn_points = self.lanes_data.get('spawn_points', {})
-                is_manual_spawn = str(lane_id) in spawn_points
-                if is_manual_spawn:
-                    # Add to set for future checks
-                    if not hasattr(self, 'manual_spawn_lanes'):
-                        self.manual_spawn_lanes = set()
-                    self.manual_spawn_lanes.add(lane_id)
-            
-            # For manual spawn points, skip all filtering - use them unconditionally
-            if is_manual_spawn:
-                available_lanes.append(lane_id)
-                # Only print once per lane (check if already printed)
-                if not hasattr(self, '_printed_spawn_lanes'):
-                    self._printed_spawn_lanes = set()
-                if lane_id not in self._printed_spawn_lanes:
-                    spawn_img_x, spawn_img_y = world_to_image(lane.spawn_position.x, lane.spawn_position.y)
-                    print(f"  ✓ Lane {lane_id} added (manual spawn at {spawn_img_x:.0f}, {spawn_img_y:.0f})")
-                    self._printed_spawn_lanes.add(lane_id)
-                continue
-            
-            # For auto-detected spawn points, apply filtering
-            
-            # Must have image_points stored (for validation)
-            if lane_id not in self.lane_image_points:
-                continue
-            
-            # Convert spawn position to image coordinates
-            spawn_img_x, spawn_img_y = world_to_image(lane.spawn_position.x, lane.spawn_position.y)
-            
-            # Check if spawn position is near an image edge
-            at_left_edge = spawn_img_x <= edge_threshold
-            at_right_edge = spawn_img_x >= self.image_width - edge_threshold
-            at_top_edge = spawn_img_y <= edge_threshold
-            at_bottom_edge = spawn_img_y >= self.image_height - edge_threshold
-            
-            if not (at_left_edge or at_right_edge or at_top_edge or at_bottom_edge):
-                continue  # Not near edge
-            
-            # Check if lane direction points inward (toward center of image)
-            # Use spawn_direction if available, otherwise use lane direction
-            if lane.spawn_direction:
-                dir_x, dir_y = lane.spawn_direction
-            else:
-                dir_x, dir_y = lane.direction
-            
-            # Vector from spawn position to world center
-            to_center_x = world_center_x - lane.spawn_position.x
-            to_center_y = world_center_y - lane.spawn_position.y
-            to_center_length = np.sqrt(to_center_x**2 + to_center_y**2)
-            
-            if to_center_length > 0:
-                # Normalize
-                to_center_x /= to_center_length
-                to_center_y /= to_center_length
-                
-                # Dot product: positive means pointing toward center
-                dot = dir_x * to_center_x + dir_y * to_center_y
-                
-                if dot <= 0:
-                    continue  # Not pointing inward (pointing away from center)
-                
-                available_lanes.append(lane_id)
+            # That's it! All lanes with spawn_position are spawnable
+            available_lanes.append(lane_id)
         
         return available_lanes
     
@@ -1316,19 +1223,23 @@ class TrafficSimulationModel(mesa.Model):
         lane_dir = lane.get_direction_at_distance(0.0) if lane.centerline_points else lane.direction
         spawn_angle = np.arctan2(lane_dir[1], lane_dir[0])
         
-        # Check against all existing vehicles (any lane)
+        # Check against vehicles on the SAME lane only
         vehicle_length = 4.5
         vehicle_width = 2.0
         spawn_max_extent = np.sqrt((vehicle_length/2)**2 + (vehicle_width/2)**2)
-        safety_margin = 15.0  # Large margin so new spawns respect bigger gaps
+        safety_margin = 0.0  # No safety margin - just check for actual overlap
         
         for vehicle in self.vehicles:
+            # CRITICAL: Only check vehicles on the same lane
+            if vehicle.lane_id != lane_id:
+                continue
+            
+            # Only check vehicles within 10m of spawn point (position 0.0)
+            if vehicle.position > 10.0:
+                continue
+            
             veh_x, veh_y = vehicle.get_visual_position()
             center_dist = np.sqrt((spawn_x - veh_x)**2 + (spawn_y - veh_y)**2)
-            
-            # Ignore vehicles far away
-            if center_dist > 120.0:
-                continue
             
             vehicle_extent = np.sqrt((vehicle.length/2)**2 + (vehicle.width/2)**2)
             min_allowed = spawn_max_extent + vehicle_extent + safety_margin
@@ -1774,6 +1685,7 @@ class TrafficSimulationModel(mesa.Model):
                     
                     if (self.spawn_timers[lane_id] >= 1.0 / rate and 
                         len(self.vehicles) < self.max_vehicles):
+                        print(f"Attempting to spawn on lane {lane_id} (timer: {self.spawn_timers[lane_id]:.2f})")
                         self._spawn_vehicle(lane_id)
                         self.spawn_timers[lane_id] = 0.0
         else:

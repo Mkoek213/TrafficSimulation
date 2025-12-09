@@ -155,7 +155,8 @@ class SimulationToCSVConverter:
                 'y3': corners_image[5],
                 'x4': corners_image[6],
                 'y4': corners_image[7],
-                'class_id': 1  # Default to car class
+                'class_id': 1,  # Default to car class
+                'lane_id': vehicle.lane_id  # Add lane_id to track which lane the vehicle is on
             }
             
             rows.append(row)
@@ -272,7 +273,8 @@ class SimulationToCSVConverter:
                     'x4': corners_image[6],
                     'y4': corners_image[7],
                     'class_id': 2,
-                    'tl_state': tl_state
+                    'tl_state': tl_state,
+                    'lane_id': lane_id  # Add lane_id for traffic lights too
                 }
                 rows.append(row)
                 tl_id -= 1
