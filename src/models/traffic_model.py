@@ -1223,26 +1223,25 @@ class TrafficSimulationModel(mesa.Model):
         lane_dir = lane.get_direction_at_distance(0.0) if lane.centerline_points else lane.direction
         spawn_angle = np.arctan2(lane_dir[1], lane_dir[0])
         
-        # Check against vehicles on the SAME lane only
+        # Check against existing vehicles on the SAME LANE ONLY
         vehicle_length = 4.5
         vehicle_width = 2.0
         spawn_max_extent = np.sqrt((vehicle_length/2)**2 + (vehicle_width/2)**2)
-        safety_margin = 0.0  # No safety margin - just check for actual overlap
         
         for vehicle in self.vehicles:
-            # CRITICAL: Only check vehicles on the same lane
+            # CRITICAL FIX: Only check vehicles on the same lane
             if vehicle.lane_id != lane_id:
-                continue
-            
-            # Only check vehicles within 10m of spawn point (position 0.0)
-            if vehicle.position > 10.0:
                 continue
             
             veh_x, veh_y = vehicle.get_visual_position()
             center_dist = np.sqrt((spawn_x - veh_x)**2 + (spawn_y - veh_y)**2)
             
+            # Ignore vehicles far away
+            if center_dist > 120.0:
+                continue
+            
             vehicle_extent = np.sqrt((vehicle.length/2)**2 + (vehicle.width/2)**2)
-            min_allowed = spawn_max_extent + vehicle_extent + safety_margin
+            min_allowed = spawn_max_extent + vehicle_extent  # No safety margin - only check direct overlap
             if center_dist < min_allowed:
                 return False
         
