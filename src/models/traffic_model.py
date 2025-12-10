@@ -1317,22 +1317,23 @@ class TrafficSimulationModel(mesa.Model):
         vehicle_id = self.vehicle_counter
         self.vehicle_counter += 1
         
-        # Random vehicle properties - various speeds (some fast, some slower)
-        # Speeds are multiplied by 10 for 10x faster movement (much faster for demos)
+        # Random vehicle properties - realistic speeds
+        # Removed model_boost multiplier to use realistic physics units (m/s)
         # Create more variation: 60% fast, 30% medium, 10% slow
         speed_roll = random.random()
         if speed_roll < 0.6:
-            # Fast vehicles (highway speeds) - 10x faster
-            max_speed = random.uniform(16.6, 20) * self.model_boost  # m/s (900-1260 km/h equivalent)
+            # Fast vehicles (highway speeds) ~60-72 km/h
+            max_speed = random.uniform(16.6, 20.0) 
         elif speed_roll < 0.9:
-            # Medium speed vehicles (city speeds) - 10x faster
-            max_speed = random.uniform(13, 16.6) * self.model_boost  # m/s (540-790 km/h equivalent)
+            # Medium speed vehicles (city speeds) ~47-60 km/h
+            max_speed = random.uniform(13.0, 16.6)
         else:
-            # Slow vehicles (traffic/slow drivers) - 10x faster
-            max_speed = random.uniform(10.0, 13)  * self.model_boost  # m/s (360-540 km/h equivalent)
+            # Slow vehicles (traffic/slow drivers) ~36-47 km/h
+            max_speed = random.uniform(10.0, 13.0)
         
-        max_acceleration = random.uniform(2.5 * self.model_boost, 4.0 * self.model_boost)  # m/s² (varied acceleration)
-        max_deceleration = random.uniform(-10.0 * self.model_boost, -20.0 * self.model_boost)  # m/s² (varied braking)
+        # Realistic acceleration/deceleration
+        max_acceleration = random.uniform(2.5, 4.0)  # m/s²
+        max_deceleration = random.uniform(-4.0, -8.0)  # m/s²
         
         # Random color - but default to yellow for visibility
         color = (255, 220, 0)  # Yellow by default (like in the image)
