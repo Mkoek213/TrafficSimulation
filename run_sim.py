@@ -85,10 +85,7 @@ if __name__ == "__main__":
     converter = SimulationToCSVConverter(
         model=model,
         image_width=IMAGE_WIDTH,
-    image_height=IMAGE_HEIGHT,
-    offset_x=OFFSET_X,
-    offset_y=OFFSET_Y,
-    scale=SCALE
+        image_height=IMAGE_HEIGHT
     )
     converter.run_simulation_and_save(OUTPUT_CSV, NUM_FRAMES, FPS)
 
