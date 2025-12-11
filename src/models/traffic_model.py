@@ -453,12 +453,12 @@ class TrafficSimulationModel(mesa.Model):
         self.road_network.add_intersection(intersection)
         
         # Initialize TrafficLightsNode for test network (empty list of lights for now as they are managed by Intersection)
-        self.traffic_lights_node = TrafficLightsNode(
-            [],
-            int(30 / self.time_step),
-            int(3 / self.time_step),
-            int(3 / self.time_step)
-        )
+        # self.traffic_lights_node = TrafficLightsNode(
+        #     [],
+        #     int(30 / self.time_step),
+        #     int(3 / self.time_step),
+        #     int(3 / self.time_step)
+        # )
         
         print(f"Created Korean crossing layout with {len(self.road_network.all_lanes)} lanes")
         print(f"Number of roads: {len(self.road_network.roads)}")
@@ -619,8 +619,8 @@ class TrafficSimulationModel(mesa.Model):
         # Use 7s stage length and 1s yellow, plus a 1s all-red buffer between stages
         self.traffic_lights_node = TrafficLightsNode(
             created_traffic_lights,
-            int(7 / self.time_step),            # steps per stage (~7 seconds)
-            int(1 / self.time_step),            # yellow/indication length (~1 second)
+            int(60 / self.time_step),            # steps per stage (~7 seconds)
+            int(3 / self.time_step),            # yellow/indication length (~1 second)
             interstage_buffer_steps=int(3 / self.time_step)  # all-red buffer (~3 seconds)
         )
 
@@ -1696,9 +1696,9 @@ class TrafficSimulationModel(mesa.Model):
         # Update statistics
         self.update_statistics()
         
-        # Update intersections (traffic lights)
-        for intersection in self.road_network.intersections:
-            intersection.update_traffic_lights(self.time_step)
+        # # Update intersections (traffic lights)
+        # for intersection in self.road_network.intersections:
+        #     intersection.update_traffic_lights(self.time_step)
     
     def get_model_info(self) -> Dict:
         """
