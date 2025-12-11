@@ -29,7 +29,7 @@ class KraussModel:
                  reaction_time: float = 1.0,  # seconds
                  random_deceleration_prob: float = 0.1,
                  random_deceleration_max: float = 0.5, # m/s²
-                 desired_stop_gap: float = 2 # m
+                 desired_stop_gap: float = 2.5 # m
                  ):  
         """
         Initialize the Krauss model parameters.
@@ -123,7 +123,7 @@ class KraussModel:
         )
         desired_speed = min(
             safe_speed,
-            # current_speed + self.max_acceleration * dt,
+            current_speed + self.max_acceleration * dt,
             self.max_speed
         )
         

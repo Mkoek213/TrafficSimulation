@@ -455,8 +455,8 @@ class TrafficSimulationModel(mesa.Model):
         # Initialize TrafficLightsNode for test network (empty list of lights for now as they are managed by Intersection)
         self.traffic_lights_node = TrafficLightsNode(
             [],
-            int(7 / self.time_step),
-            int(1 / self.time_step),
+            int(30 / self.time_step),
+            int(3 / self.time_step),
             int(3 / self.time_step)
         )
         
@@ -1317,23 +1317,9 @@ class TrafficSimulationModel(mesa.Model):
         vehicle_id = self.vehicle_counter
         self.vehicle_counter += 1
         
-        # Random vehicle properties - realistic speeds
-        # Removed model_boost multiplier to use realistic physics units (m/s)
-        # Create more variation: 60% fast, 30% medium, 10% slow
-        speed_roll = random.random()
-        if speed_roll < 0.6:
-            # Fast vehicles (highway speeds) ~60-72 km/h
-            max_speed = random.uniform(16.6, 20.0) 
-        elif speed_roll < 0.9:
-            # Medium speed vehicles (city speeds) ~47-60 km/h
-            max_speed = random.uniform(13.0, 16.6)
-        else:
-            # Slow vehicles (traffic/slow drivers) ~36-47 km/h
-            max_speed = random.uniform(10.0, 13.0)
-        
         # Realistic acceleration/deceleration
-        max_acceleration = random.uniform(2.5, 4.0)  # m/s²
-        max_deceleration = random.uniform(-4.0, -8.0)  # m/s²
+        max_acceleration = random.uniform(3, 5.0)  # m/s²
+        max_deceleration = random.uniform(-5.0, -6.0)  # m/s²
         
         # Random color - but default to yellow for visibility
         color = (255, 220, 0)  # Yellow by default (like in the image)
@@ -1356,8 +1342,10 @@ class TrafficSimulationModel(mesa.Model):
             print(f"⚠ Skipped spawning vehicle on lane {lane_id} - position {spawn_position:.1f}m not safe (overlap detected)")
             return
         
+        max_speed = random.gauss(19.44, 1)
+        
         # Random initial speed - varied based on max speed
-        # Start at 60-80% of max speed for variety (already 5x faster)
+        # Start at 60-80% of max speed for variety
         initial_speed = random.uniform(max_speed * 0.6, max_speed * 0.8)
         
         vehicle = Vehicle(
