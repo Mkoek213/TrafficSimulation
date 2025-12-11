@@ -411,7 +411,7 @@ class TrafficSimulationModel(mesa.Model):
         
         # === SET UP TRAFFIC LIGHT PHASES ===
         # Phase 1: East-West green (horizontal)
-        phase1_duration = 25.0
+        phase1_duration = 60.0
         phase1_states = {}
         for lane_id in lanes_dict['East']['incoming'] + lanes_dict['West']['incoming']:
             phase1_states[lane_id] = 'green'
@@ -427,7 +427,7 @@ class TrafficSimulationModel(mesa.Model):
             phase2_states[lane_id] = 'red'
         
         # Phase 3: North-South green (vertical)
-        phase3_duration = 20.0
+        phase3_duration = 60.0
         phase3_states = {}
         for lane_id in lanes_dict['East']['incoming'] + lanes_dict['West']['incoming']:
             phase3_states[lane_id] = 'red'

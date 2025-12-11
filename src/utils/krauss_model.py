@@ -96,7 +96,7 @@ class KraussModel:
 
         # 1.2 to ensure the gap is greater than needed to stop before leader
         # formula derived analitically to ensure it's enough to stop
-        return 1 + 1.2 * max(0, (v_f_0 * (v_f_0 / a_max + t_r) - v_l_0 * v_l_0 / a_max) / 2)
+        return self.desired_stop_gap + 1.2 * max(0, (v_f_0 * (v_f_0 / a_max + t_r) - v_l_0 * v_l_0 / a_max) / 2)
     
     def calculate_desired_speed(self, 
                               current_speed: float,

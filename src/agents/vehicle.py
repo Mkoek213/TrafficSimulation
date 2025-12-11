@@ -219,7 +219,7 @@ class Vehicle(mesa.Agent):
 
             traffic_lights_based_speed = self.krauss_model.calculate_next_speed(
                 self.speed,
-                max(0.0, distance_to_traffic_lights - self.length / 2 - 3),
+                max(0.0, distance_to_traffic_lights - self.length / 2),
                 self.model.time_step,
                 leader_for_tl
             )
@@ -321,7 +321,7 @@ class Vehicle(mesa.Agent):
             # Assuming it is a straight road
             return self.krauss_model.max_speed
         
-        if 30 < abs(current_position - lane.get_distance_from_start(sorted_by_distance[2])):
+        if 15 < abs(current_position - lane.get_distance_from_start(sorted_by_distance[2])):
             # Assuming it is a straight road
             return self.krauss_model.max_speed
         
