@@ -1229,20 +1229,22 @@ class TrafficSimulationModel(mesa.Model):
         spawn_max_extent = np.sqrt((vehicle_length/2)**2 + (vehicle_width/2)**2)
         
         for vehicle in self.vehicles:
-            # CRITICAL FIX: Only check vehicles on the same lane
-            if vehicle.lane_id != lane_id:
-                continue
+            # CRITICAL FIX: Check ALL vehicles for physical overlap at spawn
+            # This handles cases where different lanes share the same physical spawn point (e.g. lanes 3 and 4)
+            # if vehicle.lane_id != lane_id: continue  <- REMOVED
             
             veh_x, veh_y = vehicle.get_visual_position()
             center_dist = np.sqrt((spawn_x - veh_x)**2 + (spawn_y - veh_y)**2)
             
-            # Ignore vehicles far away
-            if center_dist > 120.0:
+            # Ignore vehicles far away (optimization)
+            if center_dist > 15.0:  # Reduced from 120.0 for faster check, 15m is plenty for overlap
                 continue
             
             vehicle_extent = np.sqrt((vehicle.length/2)**2 + (vehicle.width/2)**2)
-            min_allowed = spawn_max_extent + vehicle_extent  # No safety margin - only check direct overlap
+            min_allowed = spawn_max_extent + vehicle_extent + 1.0 # Add 1.0m safety margin
+            
             if center_dist < min_allowed:
+                # print(f"  ❌ Spawn blocked on lane {lane_id} by vehicle {vehicle.unique_id} (lane {vehicle.lane_id}) dist={center_dist:.2f}")
                 return False
         
         return True  # No overlap, position is safe
