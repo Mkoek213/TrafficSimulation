@@ -194,17 +194,6 @@ class Vehicle(mesa.Agent):
         all_traffic_lights.sort(key=lambda x: x.position)
         applicable_traffic_lights = next((x for x in all_traffic_lights if x.position > self.position), None)
 
-        # Take into account traffic lights
-        # self._determine_if_stopping_on_traffic_lights(distance_to_leader, leader_based_speed, applicable_traffic_lights)
-        
-        # if self.is_stopping_on_traffic_lights: 
-        #     self.speed = self.krauss_model.calculate_traffic_lights_based_next_speed(
-        #         self.speed,
-        #         applicable_traffic_lights.position - self.position - self.length / 2,
-        #         dt
-        #     )
-        # else: # If not stopping on traffic lights
-        #     self.speed = leader_based_speed
         current_speed = self.speed
         print(f"leader_based_speed: {leader_based_speed}")
 
@@ -230,7 +219,7 @@ class Vehicle(mesa.Agent):
 
             traffic_lights_based_speed = self.krauss_model.calculate_next_speed(
                 self.speed,
-                max(0.0, distance_to_traffic_lights - self.length / 2 - 3),
+                max(0.0, distance_to_traffic_lights - self.length / 2),
                 self.model.time_step,
                 leader_for_tl
             )
@@ -242,6 +231,13 @@ class Vehicle(mesa.Agent):
             leader_speed = self.get_leader().speed if self.get_leader() is not None else "None"
             self.speed = leader_based_speed
             print(f"(veh: {self.unique_id}) leader: distance: {distance_to_leader}, speed(l/f): {leader_speed}/{self.speed}, next_speed: {current_speed}")
+
+        turning_radius_speed = max(
+            self._calculate_safe_turning_based_speed(),
+            current_speed + self.krauss_model.max_deceleration * dt
+            )
+
+        self.speed = min(self.speed, turning_radius_speed)
 
         # Update position
         next_position = self._calculate_position_update(
@@ -314,6 +310,40 @@ class Vehicle(mesa.Agent):
             # If transition was successful, position was already set in _try_lane_transition()
         else:
             self.position = next_position
+
+    def _calculate_safe_turning_based_speed(self):
+        current_position = self.position
+
+        lane = self.model.road_network.get_lane(self.lane_id)
+        sorted_by_distance = sorted(lane.centerline_points, key=lambda x: abs(current_position - lane.get_distance_from_start(x)))
+
+        if len(sorted_by_distance) < 3:
+            # Assuming it is a straight road
+            return self.krauss_model.max_speed
+        
+        if 15 < abs(current_position - lane.get_distance_from_start(sorted_by_distance[2])):
+            # Assuming it is a straight road
+            return self.krauss_model.max_speed
+        
+        points = sorted_by_distance[:3]
+        # Calculate radius of circle through 3 points
+        p1, p2, p3 = points
+        x1, y1 = p1.x, p1.y
+        x2, y2 = p2.x, p2.y
+        x3, y3 = p3.x, p3.y
+
+        # Using circumradius formula
+        denom = 2 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2))
+        if abs(denom) < 1e-9:
+            return self.krauss_model.max_speed
+
+        a = ((x1**2 + y1**2) * (y2 - y3) + (x2**2 + y2**2) * (y3 - y1) + (x3**2 + y3**2) * (y1 - y2)) / denom
+        b = ((x1**2 + y1**2) * (x3 - x2) + (x2**2 + y2**2) * (x1 - x3) + (x3**2 + y3**2) * (x2 - x1)) / denom
+
+        radius = np.sqrt((x1 - a)**2 + (y1 - b)**2)
+        
+        return np.sqrt(0.8 * radius)
+
 
     def _determine_if_stopping_on_traffic_lights(self, distance_to_leader: int, leader_based_speed: float, applicable_traffic_lights: TrafficLights):
 

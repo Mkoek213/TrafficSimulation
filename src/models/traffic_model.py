@@ -411,7 +411,7 @@ class TrafficSimulationModel(mesa.Model):
         
         # === SET UP TRAFFIC LIGHT PHASES ===
         # Phase 1: East-West green (horizontal)
-        phase1_duration = 25.0
+        phase1_duration = 60.0
         phase1_states = {}
         for lane_id in lanes_dict['East']['incoming'] + lanes_dict['West']['incoming']:
             phase1_states[lane_id] = 'green'
@@ -427,7 +427,7 @@ class TrafficSimulationModel(mesa.Model):
             phase2_states[lane_id] = 'red'
         
         # Phase 3: North-South green (vertical)
-        phase3_duration = 20.0
+        phase3_duration = 60.0
         phase3_states = {}
         for lane_id in lanes_dict['East']['incoming'] + lanes_dict['West']['incoming']:
             phase3_states[lane_id] = 'red'
@@ -453,12 +453,12 @@ class TrafficSimulationModel(mesa.Model):
         self.road_network.add_intersection(intersection)
         
         # Initialize TrafficLightsNode for test network (empty list of lights for now as they are managed by Intersection)
-        self.traffic_lights_node = TrafficLightsNode(
-            [],
-            int(7 / self.time_step),
-            int(1 / self.time_step),
-            int(3 / self.time_step)
-        )
+        # self.traffic_lights_node = TrafficLightsNode(
+        #     [],
+        #     int(30 / self.time_step),
+        #     int(3 / self.time_step),
+        #     int(3 / self.time_step)
+        # )
         
         print(f"Created Korean crossing layout with {len(self.road_network.all_lanes)} lanes")
         print(f"Number of roads: {len(self.road_network.roads)}")
@@ -619,8 +619,8 @@ class TrafficSimulationModel(mesa.Model):
         # Use 7s stage length and 1s yellow, plus a 1s all-red buffer between stages
         self.traffic_lights_node = TrafficLightsNode(
             created_traffic_lights,
-            int(7 / self.time_step),            # steps per stage (~7 seconds)
-            int(1 / self.time_step),            # yellow/indication length (~1 second)
+            int(60 / self.time_step),            # steps per stage (~7 seconds)
+            int(3 / self.time_step),            # yellow/indication length (~1 second)
             interstage_buffer_steps=int(3 / self.time_step)  # all-red buffer (~3 seconds)
         )
 
@@ -1319,22 +1319,9 @@ class TrafficSimulationModel(mesa.Model):
         vehicle_id = self.vehicle_counter
         self.vehicle_counter += 1
         
-        # Random vehicle properties - various speeds (some fast, some slower)
-        # Speeds are multiplied by 10 for 10x faster movement (much faster for demos)
-        # Create more variation: 60% fast, 30% medium, 10% slow
-        speed_roll = random.random()
-        if speed_roll < 0.6:
-            # Fast vehicles (highway speeds) - 10x faster
-            max_speed = random.uniform(16.6, 20) * self.model_boost  # m/s (900-1260 km/h equivalent)
-        elif speed_roll < 0.9:
-            # Medium speed vehicles (city speeds) - 10x faster
-            max_speed = random.uniform(13, 16.6) * self.model_boost  # m/s (540-790 km/h equivalent)
-        else:
-            # Slow vehicles (traffic/slow drivers) - 10x faster
-            max_speed = random.uniform(10.0, 13)  * self.model_boost  # m/s (360-540 km/h equivalent)
-        
-        max_acceleration = random.uniform(2.5 * self.model_boost, 4.0 * self.model_boost)  # m/s² (varied acceleration)
-        max_deceleration = random.uniform(-10.0 * self.model_boost, -20.0 * self.model_boost)  # m/s² (varied braking)
+        # Realistic acceleration/deceleration
+        max_acceleration = random.uniform(3, 5.0)  # m/s²
+        max_deceleration = random.uniform(-5.0, -6.0)  # m/s²
         
         # Random color - but default to yellow for visibility
         color = (255, 220, 0)  # Yellow by default (like in the image)
@@ -1357,8 +1344,10 @@ class TrafficSimulationModel(mesa.Model):
             print(f"⚠ Skipped spawning vehicle on lane {lane_id} - position {spawn_position:.1f}m not safe (overlap detected)")
             return
         
+        max_speed = random.gauss(19.44, 1)
+        
         # Random initial speed - varied based on max speed
-        # Start at 60-80% of max speed for variety (already 5x faster)
+        # Start at 60-80% of max speed for variety
         initial_speed = random.uniform(max_speed * 0.6, max_speed * 0.8)
         
         vehicle = Vehicle(
@@ -1709,9 +1698,9 @@ class TrafficSimulationModel(mesa.Model):
         # Update statistics
         self.update_statistics()
         
-        # Update intersections (traffic lights)
-        for intersection in self.road_network.intersections:
-            intersection.update_traffic_lights(self.time_step)
+        # # Update intersections (traffic lights)
+        # for intersection in self.road_network.intersections:
+        #     intersection.update_traffic_lights(self.time_step)
     
     def get_model_info(self) -> Dict:
         """
