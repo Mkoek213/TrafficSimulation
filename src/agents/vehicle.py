@@ -194,6 +194,17 @@ class Vehicle(mesa.Agent):
         all_traffic_lights.sort(key=lambda x: x.position)
         applicable_traffic_lights = next((x for x in all_traffic_lights if x.position > self.position), None)
 
+        # Take into account traffic lights
+        # self._determine_if_stopping_on_traffic_lights(distance_to_leader, leader_based_speed, applicable_traffic_lights)
+        
+        # if self.is_stopping_on_traffic_lights: 
+        #     self.speed = self.krauss_model.calculate_traffic_lights_based_next_speed(
+        #         self.speed,
+        #         applicable_traffic_lights.position - self.position - self.length / 2,
+        #         dt
+        #     )
+        # else: # If not stopping on traffic lights
+        #     self.speed = leader_based_speed
         current_speed = self.speed
         print(f"leader_based_speed: {leader_based_speed}")
 
@@ -231,13 +242,6 @@ class Vehicle(mesa.Agent):
             leader_speed = self.get_leader().speed if self.get_leader() is not None else "None"
             self.speed = leader_based_speed
             print(f"(veh: {self.unique_id}) leader: distance: {distance_to_leader}, speed(l/f): {leader_speed}/{self.speed}, next_speed: {current_speed}")
-
-        turning_radius_speed = max(
-            self._calculate_safe_turning_based_speed(),
-            current_speed + self.krauss_model.max_deceleration * dt
-            )
-
-        self.speed = min(self.speed, turning_radius_speed)
 
         # Update position
         next_position = self._calculate_position_update(

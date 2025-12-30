@@ -30,44 +30,66 @@ def load_scenario(name, path):
         print(f"Error loading {path}: {e}")
         return None
 
-PIXELS_PER_METER = 11.0  # Corrections based on user feedback (likely Scale=11 default)
+METERS_PER_PIXEL = 0.117  # From physics_analysis.py
 
 def calculate_metrics(df, scenario_name):
     """Calculate aggregate metrics for a scenario DataFrame."""
-    # Group by track to calculate total stats
-    track_groups = df.groupby('track_id')
-    vehicle_stats = []
-    
     # Pre-calculate deltas for speed
+    # Ensure sorted by track and timestamp/frame
     df = df.sort_values(['track_id', 'frame'])
-    df['prev_x'] = df.groupby('track_id')['center_x'].shift(1)
-    df['prev_y'] = df.groupby('track_id')['center_y'].shift(1)
-    df['prev_time'] = df.groupby('track_id')['timestamp'].shift(1)
     
-    # Calculate instantaneous speed (distance / time)
-    # dist = sqrt((x2-x1)^2 + (y2-y1)^2)
-    # speed = dist / dt
+    # Use pandas groupby operations for efficiency (like in friend's script)
+    grouped = df.groupby('track_id')
+    
+    df['prev_x'] = grouped['center_x'].shift(1)
+    df['prev_y'] = grouped['center_y'].shift(1)
+    # Use timestamp for dt to be precise
+    df['prev_time'] = grouped['timestamp'].shift(1)
+    
     dx = df['center_x'] - df['prev_x']
     dy = df['center_y'] - df['prev_y']
     dt = df['timestamp'] - df['prev_time']
     
     dist_pixels = np.sqrt(dx**2 + dy**2)
-    dist_meters = dist_pixels / PIXELS_PER_METER
     
-    # Filter out zero dt (shouldn't happen with valid frames but safety check)
-    with np.errstate(divide='ignore', invalid='ignore'):
-        speed_ms = dist_meters / dt
-        speed_ms = np.where(dt > 0, speed_ms, np.nan)
+    # Calculate raw speed in m/s
+    # M_PER_PX = 0.117
+    # speed (m/s) = (dist_px * 0.117) / dt
     
-    df['speed_kph'] = speed_ms * 3.6
+    # Filter valid dt
+    valid_mask = (dt > 0.001)  # avoid div by zero
     
-    # 1. Active vehicles over time (per frame)
+    df['speed_ms'] = np.nan
+    df.loc[valid_mask, 'speed_ms'] = (dist_pixels[valid_mask] * METERS_PER_PIXEL) / dt[valid_mask]
+    
+    # Smoothing (Window=10, min_periods=3) - from physics_analysis.py
+    df['speed_smooth_ms'] = grouped['speed_ms'].transform(lambda x: x.rolling(window=10, min_periods=3).mean())
+    df['speed_kph'] = df['speed_smooth_ms'] * 3.6
+    
+    # Calculate Acceleration (m/s^2)
+    # accel = delta_speed / dt
+    df['prev_speed_ms'] = grouped['speed_smooth_ms'].shift(1)
+    df['accel_ms2'] = (df['speed_smooth_ms'] - df['prev_speed_ms']) / dt
+    
+    # Extract significant braking/acceleration phases for stats
+    # Braking: accel < -0.5
+    braking_mask = (df['accel_ms2'] < -0.5) & (df['accel_ms2'] > -6.0) & (df['speed_smooth_ms'] > 2.0)
+    decelerations = -df.loc[braking_mask, 'accel_ms2']
+    
+    # Acceleration: accel > 0.5
+    accel_mask = (df['accel_ms2'] > 0.5) & (df['accel_ms2'] < 5.0) & (df['speed_smooth_ms'] > 1.0)
+    accelerations = df.loc[accel_mask, 'accel_ms2']
+    
+    # 1. Active vehicles
     vehicles_per_frame = df.groupby('frame')['track_id'].nunique()
     
-    # 2. Avg Speed per Frame
+    # 2. Avg Speed per Frame (using smoothed kph)
     avg_speed_per_frame = df.groupby('frame')['speed_kph'].mean()
     
     # 3. Trip stats
+    track_groups = df.groupby('track_id')
+    vehicle_stats = []
+    
     for track_id, group in track_groups:
         if len(group) < 2:
             continue
@@ -80,8 +102,6 @@ def calculate_metrics(df, scenario_name):
         vehicle_stats.append({
             'track_id': track_id,
             'duration': duration,
-            # We could sum incremental distances, but simple euclidian is decent approx for straight lanes
-            # 'distance_m': ...
         })
     
     vehicle_stats_df = pd.DataFrame(vehicle_stats)
@@ -90,7 +110,9 @@ def calculate_metrics(df, scenario_name):
         'Scenario': scenario_name,
         'Total Vehicles': df['track_id'].nunique(),
         'Avg Travel Time (s)': vehicle_stats_df['duration'].mean() if not vehicle_stats_df.empty else 0,
-        'Avg Speed (km/h)': df['speed_kph'].mean(), # Global average of all instant speeds
+        'Avg Speed (km/h)': df['speed_kph'].mean(), 
+        'Avg Deceleration (m/s2)': decelerations.mean() if not decelerations.empty else 0,
+        'Avg Acceleration (m/s2)': accelerations.mean() if not accelerations.empty else 0,
         'Throughput (veh/min)': (df['track_id'].nunique() / (df['timestamp'].max() - df['timestamp'].min())) * 60 if not df.empty else 0
     }
     
@@ -177,7 +199,11 @@ def main():
             valid_trips_data[name] = trips
             vehicles_per_frame_data[name] = v_per_frame
             avg_speed_data[name] = avg_speed
-            print(f"Processed: {name} (Avg Time: {met['Avg Travel Time (s)']:.1f}s, Avg Speed: {met['Avg Speed (km/h)']:.1f} km/h)")
+            print(f"Processed: {name}")
+            print(f"  Avg Time: {met['Avg Travel Time (s)']:.1f}s")
+            print(f"  Avg Speed: {met['Avg Speed (km/h)']:.1f} km/h")
+            print(f"  Avg Accel: {met['Avg Acceleration (m/s2)']:.2f} m/s^2")
+            print(f"  Avg Decel: {met['Avg Deceleration (m/s2)']:.2f} m/s^2")
             
     if not all_metrics:
         print("No valid scenarios processed.")
