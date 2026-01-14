@@ -100,6 +100,10 @@ class Vehicle(mesa.Agent):
         self.current_acceleration = 0.0
         self.reaction_time_counter = 0.0
         
+        # Startup delay: extra distance the leader must move before this vehicle starts from a stop
+        # Distribution: Normal(2.0, 0.5) clipped to >= 0
+        self.startup_delay_threshold = max(0.0, np.random.normal(2.0, 0.5))
+        
     def get_leader(self) -> Optional['Vehicle']:
         """
         Find the leading vehicle in the same lane.
@@ -468,6 +472,15 @@ class Vehicle(mesa.Agent):
             self.model.time_step,
             leader_speed
         )
+        
+        # Apply start-up delay logic
+        # If we are stopped, wait until the leader has moved a bit further
+        if self.speed < 0.1 and leader_speed is not None:
+            # We expect the vehicle to stop at roughly krauss_model.desired_stop_gap
+            # We want it to wait until the gap increases by startup_delay_threshold
+            required_gap = self.krauss_model.desired_stop_gap + self.startup_delay_threshold
+            if effective_gap < required_gap:
+                next_speed = 0.0
 
         return next_speed
     

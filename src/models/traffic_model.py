@@ -37,7 +37,7 @@ class TrafficSimulationModel(mesa.Model):
                  vehicle_spawn_rate: float | Dict[int, float] = 0.5,  # vehicles per second (more frequent spawning)
                  max_vehicles: int = 150,
                  custom_lanes_path: Optional[str] = None,
-                 model_boost: float = 10):
+                 model_boost: float = 1):
         """
         Initialize the traffic simulation model.
         
@@ -1324,7 +1324,7 @@ class TrafficSimulationModel(mesa.Model):
         # Create more variation: 60% fast, 30% medium, 10% slow
         speed_roll = random.random()
         if speed_roll < 0.6:
-            # Fast vehicles (highway speeds) - 10x faster
+            # Fast vehicles (highway speeds) - 10x faster -NIEIEIEI
             max_speed = random.uniform(16.6, 20) * self.model_boost  # m/s (900-1260 km/h equivalent)
         elif speed_roll < 0.9:
             # Medium speed vehicles (city speeds) - 10x faster
